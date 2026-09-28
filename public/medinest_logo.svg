@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <defs>
+    <linearGradient id="medinestGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4A6FA5" />
+      <stop offset="100%" stop-color="#2D4D76" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Group in center -->
+  <g transform="translate(0, 0)">
+    <!-- Central Staff Top Sphere -->
+    <ellipse cx="250" cy="110" rx="42" ry="46" fill="currentColor" />
+
+    <!-- Central Vertical Staff -->
+    <path d="M236 150 L264 150 L256 420 L244 420 Z" fill="currentColor" />
+
+    <!-- Left Upper Wing of M -->
+    <path d="M110 180 C125 150 160 130 195 190 C220 232 250 280 250 280 C240 270 215 220 180 185 C150 155 125 165 110 180 Z" fill="currentColor" />
+    
+    <!-- Right Upper Wing of M -->
+    <path d="M390 180 C375 150 340 130 305 190 C280 232 250 280 250 280 C260 270 285 220 320 185 C350 155 375 165 390 180 Z" fill="currentColor" />
+
+    <!-- Left Outer Leg / Stroke of M -->
+    <path d="M85 395 C110 320 130 250 145 200 C155 235 145 300 120 380 C110 410 95 415 85 395 Z" fill="currentColor" />
+
+    <!-- Right Outer Leg / Stroke of M -->
+    <path d="M415 395 C390 320 370 250 355 200 C345 235 355 300 380 380 C390 410 405 415 415 395 Z" fill="currentColor" />
+
+    <!-- Serpentine Coils wrapping around staff (forming the caduceus center) -->
+    <!-- Coil 1: Upper Middle Sweep -->
+    <path d="M175 250 C210 275 260 305 295 325 C330 345 345 370 330 395 C315 420 280 430 255 425 C280 415 295 395 285 375 C270 345 225 315 195 295 C170 275 160 260 175 250 Z" fill="currentColor" />
+
+    <!-- Coil 2: Reverse Sweep crossing over -->
+    <path d="M325 250 C290 275 240 305 205 325 C170 345 155 370 170 395 C185 420 220 430 245 425 C220 415 205 395 215 375 C230 345 275 315 305 295 C330 275 340 260 325 250 Z" fill="currentColor" />
+
+    <!-- Bottom Tapered Claws / Base of Staff -->
+    <path d="M236 410 C234 430 225 445 215 448 C225 435 235 425 242 410 Z" fill="currentColor" />
+    <path d="M264 410 C266 430 275 445 285 448 C275 435 265 425 258 410 Z" fill="currentColor" />
+    <path d="M246 415 L254 415 L250 452 Z" fill="currentColor" />
+  </g>
+</svg>

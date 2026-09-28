@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 550" fill="none">
+  <!-- Soft background card fill optional -->
+  <g stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Head & Hair -->
+    <!-- Hair Top & Side Part -->
+    <path d="M215 145 C205 130 205 105 215 85 C228 60 260 50 295 55 C325 60 345 80 348 105 C350 120 345 135 340 148" fill="white" />
+    <path d="M225 80 C240 70 270 70 288 85 C305 95 320 85 338 90" />
+    <path d="M210 100 C218 92 230 88 245 92" />
+    
+    <!-- Ears -->
+    <path d="M208 140 C198 142 195 160 204 172 C208 178 214 178 218 172" fill="white" />
+    <path d="M342 140 C352 142 355 160 346 172 C342 178 336 178 332 172" fill="white" />
+
+    <!-- Face Silhouette / Jawline -->
+    <path d="M215 142 C218 175 228 200 240 215 C255 230 295 230 310 215 C322 200 332 175 335 142" fill="white" />
+
+    <!-- Neck -->
+    <path d="M236 215 L232 248" />
+    <path d="M314 215 L318 248" />
+
+    <!-- Shirt Collar & Tie -->
+    <path d="M230 248 L260 290 L275 255 L290 290 L320 248" fill="white" />
+    <!-- Tie Knot -->
+    <path d="M266 260 L284 260 L280 282 L275 285 L270 282 Z" fill="#032F31" stroke="#032F31" />
+    <!-- Tie Body -->
+    <path d="M270 285 L263 365 L275 385 L287 365 L280 285 Z" fill="#032F31" stroke="#032F31" />
+
+    <!-- Coat Lapels -->
+    <!-- Left Lapel -->
+    <path d="M228 248 L170 300 L205 355 L255 425" fill="white" />
+    <path d="M170 300 L212 308" />
+    
+    <!-- Right Lapel -->
+    <path d="M322 248 L380 300 L345 355 L295 425" fill="white" />
+    <path d="M380 300 L338 308" />
+
+    <!-- Coat Shoulders & Outer Silhouette -->
+    <!-- Left Shoulder -->
+    <path d="M225 248 C185 255 145 275 120 315 C95 355 85 410 80 475 C78 505 82 540 85 550" fill="white" />
+    <!-- Right Shoulder -->
+    <path d="M325 248 C365 255 405 275 430 315 C455 355 465 410 470 475 C472 505 468 540 465 550" fill="white" />
+
+    <!-- Coat Center Seam / Button line -->
+    <path d="M275 425 L275 550" />
+
+    <!-- Stethoscope -->
+    <!-- Neck loop -->
+    <path d="M210 240 C190 260 180 300 185 345 C190 380 205 415 215 415 C222 415 228 395 225 365 C222 340 210 325 200 320" fill="none" stroke-width="7" />
+    <!-- Stethoscope Chest Piece / Diaphragm (Left side) -->
+    <circle cx="218" cy="350" r="14" fill="white" stroke-width="6" />
+    <circle cx="218" cy="350" r="6" fill="currentColor" />
+
+    <!-- Right side Stethoscope Tubing & Bell -->
+    <path d="M340 240 C355 260 365 295 360 335 C355 365 350 380 350 395" fill="none" stroke-width="7" />
+    <ellipse cx="352" cy="402" rx="15" ry="14" fill="white" stroke-width="6" />
+    <circle cx="352" cy="402" r="7" fill="currentColor" />
+
+    <!-- Folded Arms & Hands -->
+    <!-- Left Forearm crossing over -->
+    <path d="M110 445 C130 475 170 515 240 515 C270 515 315 505 345 480" fill="white" />
+    <!-- Right Forearm underneath & hand -->
+    <path d="M440 445 C420 475 380 515 310 515" fill="white" />
+    <!-- Right Hand resting on left arm -->
+    <path d="M355 460 C375 460 395 465 425 485 C428 495 420 505 405 505 C385 505 365 490 350 480" fill="white" />
+    <path d="M365 475 C385 475 405 480 418 492" />
+    <path d="M375 490 C390 490 405 495 412 502" />
+
+    <!-- Left Hand tucked -->
+    <path d="M190 495 C175 510 160 525 155 540" />
+  </g>
+</svg>
