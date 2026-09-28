@@ -205,7 +205,7 @@ export function generateReceiptPDF(appointment: Appointment): void {
 }
 
 /**
- * Saves a receipt record to Supabase (best-effort, no-op in demo mode).
+ * Saves a receipt record.
  */
 export async function saveReceiptRecord(
   appointmentId: string

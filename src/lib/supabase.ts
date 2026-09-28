@@ -1,59 +1,54 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-
-const supabaseUrl = (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
-  'https://rjacrstbafbfcsovgehz.supabase.co';
-
-const supabaseAnonKey = (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_ANON_KEY) ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqYWNyc3RiYWZiZmNzb3ZnZWh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMzkwOTcsImV4cCI6MjEwNDcxNTA5N30.KsHhHRMnC-aTEcMtOBeZ2n7rkXBGbWRnie0iCIfRRWs';
-
-// If env vars are missing, we operate in demo/localStorage mode.
-export const SUPABASE_CONFIGURED =
-  !!supabaseUrl && supabaseUrl !== 'YOUR_SUPABASE_URL' &&
-  !!supabaseAnonKey && supabaseAnonKey !== 'YOUR_SUPABASE_ANON_KEY';
-
 /**
- * Isolated Supabase Client for Patient Portal (storageKey: medinest_patient_auth)
+ * MediNest — Decoupled Supabase Abstraction Layer (Zero-Dependency Shim)
+ *
+ * This module replaces `@supabase/supabase-js` to allow total removal of the Supabase package
+ * while preserving backward compatibility for legacy components.
  */
-export const patientSupabase: SupabaseClient = SUPABASE_CONFIGURED
-  ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        storageKey: 'medinest_patient_auth',
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: true,
-      },
-    })
-  : (createClient('https://placeholder.supabase.co', 'placeholder') as SupabaseClient);
 
-/**
- * Isolated Supabase Client for Doctor Portal (storageKey: medinest_doctor_auth)
- */
-export const doctorSupabase: SupabaseClient = SUPABASE_CONFIGURED
-  ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        storageKey: 'medinest_doctor_auth',
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false,
-      },
-    })
-  : (createClient('https://placeholder.supabase.co', 'placeholder') as SupabaseClient);
+export const SUPABASE_CONFIGURED = false;
 
-/**
- * Isolated Supabase Client for Admin Portal (storageKey: medinest_admin_auth)
- */
-export const adminSupabase: SupabaseClient = SUPABASE_CONFIGURED
-  ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        storageKey: 'medinest_admin_auth',
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false,
-      },
-    })
-  : (createClient('https://placeholder.supabase.co', 'placeholder') as SupabaseClient);
+// Mock chainable query builder for backward compatibility
+const mockChain = {
+  select: () => mockChain,
+  insert: () => mockChain,
+  update: () => mockChain,
+  delete: () => mockChain,
+  upsert: () => mockChain,
+  eq: () => mockChain,
+  gte: () => mockChain,
+  lte: () => mockChain,
+  gt: () => mockChain,
+  in: () => mockChain,
+  contains: () => mockChain,
+  order: () => mockChain,
+  single: () => Promise.resolve({ data: null, error: null }),
+  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+  then: (resolve: any) => resolve({ data: null, error: null }),
+};
 
-// Default export alias pointing to patientSupabase for backward compatibility
-export const supabase = patientSupabase;
+// Mock Auth client interface
+const mockAuth = {
+  getSession: async () => ({ data: { session: null }, error: null }),
+  onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+  signUp: async () => ({ data: { user: null, session: null }, error: null }),
+  signInWithPassword: async () => ({ data: { user: null, session: null }, error: null }),
+  signOut: async () => ({ error: null }),
+  resend: async () => ({ error: null }),
+};
+
+// Mock Supabase Client Object
+const createMockSupabaseClient = () => ({
+  auth: mockAuth,
+  from: () => mockChain,
+  channel: () => ({
+    on: () => ({ subscribe: () => {} }),
+    subscribe: () => {},
+    unsubscribe: () => {},
+  }),
+  rpc: async () => ({ data: null, error: null }),
+});
+
+export const patientSupabase: any = createMockSupabaseClient();
+export const doctorSupabase: any = createMockSupabaseClient();
+export const adminSupabase: any = createMockSupabaseClient();
+export const supabase: any = patientSupabase;

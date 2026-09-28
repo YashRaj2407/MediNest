@@ -2,26 +2,19 @@
  * src/lib/razorpay.ts
  *
  * Client-side Razorpay helper.
- *
- * Security contract:
- *  - VITE_RAZORPAY_KEY_ID (public) may appear here — it is also in Razorpay's own checkout.js
- *  - RAZORPAY_KEY_SECRET MUST NOT appear in this file or anywhere under src/
- *    It lives exclusively in Supabase Edge Function secrets (encrypted Deno env).
+ * Calls Express backend (/api/v1/payments) for order creation and verification.
  */
 
 import { CreateAppointmentPayload, computeSlotEndTime } from './appointments';
 
-// Public Key ID — safe to expose in the browser bundle.
-// Set VITE_RAZORPAY_KEY_ID in .env.local (file is git-ignored).
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+
 const RAZORPAY_KEY_ID: string =
   (import.meta as any).env?.VITE_RAZORPAY_KEY_ID ?? '';
 
-// Supabase project URL for calling Edge Functions
 const SUPABASE_URL = 'https://rjacrstbafbfcsovgehz.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqYWNyc3RiYWZiZmNzb3ZnZWh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMzkwOTcsImV4cCI6MjEwNDcxNTA5N30.KsHhHRMnC-aTEcMtOBeZ2n7rkXBGbWRnie0iCIfRRWs';
-
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface RazorpayOrderResult {
   order_id: string;
@@ -41,8 +34,6 @@ export interface RazorpayVerifyResult {
   razorpay_payment_id: string;
 }
 
-// ─── Load Razorpay Checkout Script ──────────────────────────────────────────
-
 let scriptLoaded = false;
 export function loadRazorpayScript(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -53,20 +44,38 @@ export function loadRazorpayScript(): Promise<boolean> {
     const script = document.createElement('script');
     script.src = 'https://checkout.razorpay.com/v1/checkout.js';
     script.async = true;
-    script.onload  = () => { scriptLoaded = true; resolve(true); };
+    script.onload = () => { scriptLoaded = true; resolve(true); };
     script.onerror = () => resolve(false);
     document.head.appendChild(script);
   });
 }
 
-// ─── Step 1: Create Razorpay Order (via Edge Function) ──────────────────────
-
+/** Step 1: Create Razorpay Order */
 export async function createRazorpayOrder(
   amountINR: number,
   appointmentRef: string,
   doctorId?: string,
   slotDatetime?: string,
 ): Promise<RazorpayOrderResult> {
+  // 1. Try Express backend
+  try {
+    const res = await fetch(`${API_BASE_URL}/payments/create-order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount_inr: amountINR,
+        appointment_ref: appointmentRef,
+        doctor_id: doctorId,
+        slot_datetime: slotDatetime,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data as RazorpayOrderResult;
+    }
+  } catch (_err) {}
+
+  // 2. Fallback to Supabase Edge Function
   const res = await fetch(`${SUPABASE_URL}/functions/v1/create-razorpay-order`, {
     method: 'POST',
     headers: {
@@ -89,8 +98,7 @@ export async function createRazorpayOrder(
   return data as RazorpayOrderResult;
 }
 
-// ─── Step 2: Open Razorpay Checkout Popup ───────────────────────────────────
-
+/** Step 2: Open Razorpay Checkout Popup */
 export function openRazorpayCheckout(
   order: RazorpayOrderResult,
   prefill: { name: string; email: string; contact: string },
@@ -105,16 +113,15 @@ export function openRazorpayCheckout(
   }
 
   const options = {
-    key: keyId,           // Public key ID — safe in browser
-    amount: order.amount, // paise
+    key: keyId,
+    amount: order.amount,
     currency: 'INR',
     name: 'MediNest',
     description: `Medical Appointment — ${appointmentRef}`,
-    image: 'https://rjacrstbafbfcsovgehz.supabase.co/storage/v1/object/public/assets/logo.png',
     order_id: order.order_id,
     prefill: {
-      name:    prefill.name,
-      email:   prefill.email,
+      name: prefill.name,
+      email: prefill.email,
       contact: prefill.contact,
     },
     theme: { color: '#032F31' },
@@ -122,7 +129,6 @@ export function openRazorpayCheckout(
       ondismiss: () => onFailure('Payment was cancelled by user'),
     },
     handler: (response: RazorpayPaymentResult) => {
-      // Called by Razorpay on successful payment capture
       onSuccess(response);
     },
   };
@@ -134,12 +140,30 @@ export function openRazorpayCheckout(
   rzp.open();
 }
 
-// ─── Step 3: Verify Payment (via Edge Function) ──────────────────────────────
-
+/** Step 3: Verify Payment */
 export async function verifyRazorpayPayment(
   paymentResult: RazorpayPaymentResult,
   appointmentPayload: Record<string, unknown>,
 ): Promise<RazorpayVerifyResult> {
+  // 1. Try Express backend
+  try {
+    const res = await fetch(`${API_BASE_URL}/payments/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        razorpay_order_id: paymentResult.razorpay_order_id,
+        razorpay_payment_id: paymentResult.razorpay_payment_id,
+        razorpay_signature: paymentResult.razorpay_signature,
+        appointment: appointmentPayload,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data as RazorpayVerifyResult;
+    }
+  } catch (_err) {}
+
+  // 2. Fallback to Supabase Edge Function
   const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-razorpay-payment`, {
     method: 'POST',
     headers: {
@@ -148,10 +172,10 @@ export async function verifyRazorpayPayment(
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify({
-      razorpay_order_id:   paymentResult.razorpay_order_id,
+      razorpay_order_id: paymentResult.razorpay_order_id,
       razorpay_payment_id: paymentResult.razorpay_payment_id,
-      razorpay_signature:  paymentResult.razorpay_signature,
-      appointment:         appointmentPayload,
+      razorpay_signature: paymentResult.razorpay_signature,
+      appointment: appointmentPayload,
     }),
   });
 
@@ -162,9 +186,6 @@ export async function verifyRazorpayPayment(
   return data as RazorpayVerifyResult;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Build the appointment DB payload from the booking form data */
 export function buildAppointmentPayload(
   payload: CreateAppointmentPayload & { patientId?: string },
   appointmentId: string,
@@ -183,32 +204,30 @@ export function buildAppointmentPayload(
   endDT.setHours(eh, em, 0, 0);
 
   return {
-    id:                  appointmentId,
-    patient_id:          payload.patientId ?? null,
-    doctor_id:           payload.doctorId,
-    consultation_type:   payload.consultationType,
-    start_datetime:      startDT.toISOString(),
-    end_datetime:        endDT.toISOString(),
-    symptoms:            payload.visitReason || 'Routine consultation',
-    total_inr:           payload.totalINR,
-    fee_inr:             payload.feeINR,
-    platform_fee_inr:    payload.platformFeeINR,
-    taxes_inr:           payload.taxesINR,
-    patient_name:        payload.patientName,
-    patient_age:         payload.patientAge,
-    patient_gender:      payload.patientGender,
-    patient_phone:       payload.patientPhone.startsWith('+91')
-                           ? payload.patientPhone
-                           : `+91 ${payload.patientPhone}`,
-    patient_email:       payload.patientEmail,
-    video_link:          payload.videoLink ?? null,
-    payment_method:      'Razorpay',
+    id: appointmentId,
+    patient_id: payload.patientId ?? null,
+    doctor_id: payload.doctorId,
+    consultation_type: payload.consultationType,
+    start_datetime: startDT.toISOString(),
+    end_datetime: endDT.toISOString(),
+    symptoms: payload.visitReason || 'Routine consultation',
+    total_inr: payload.totalINR,
+    fee_inr: payload.feeINR,
+    platform_fee_inr: payload.platformFeeINR,
+    taxes_inr: payload.taxesINR,
+    patient_name: payload.patientName,
+    patient_age: payload.patientAge,
+    patient_gender: payload.patientGender,
+    patient_phone: payload.patientPhone.startsWith('+91') ? payload.patientPhone : `+91 ${payload.patientPhone}`,
+    patient_email: payload.patientEmail,
+    video_link: payload.videoLink ?? null,
+    payment_method: 'Razorpay',
   };
 }
 
 function resolveDate(dateStr: string): Date {
   const now = new Date();
-  if (dateStr.startsWith('Today'))    return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+  if (dateStr.startsWith('Today')) return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   if (dateStr.startsWith('Tomorrow')) {
     const d = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
     d.setDate(d.getDate() + 1);

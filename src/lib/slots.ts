@@ -1,5 +1,7 @@
-import { supabase, SUPABASE_CONFIGURED } from './supabase';
 import { Appointment } from '../types';
+import { supabase, SUPABASE_CONFIGURED } from './supabase';
+
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
 
 export type SlotStatus = 'available' | 'booked' | 'break' | 'blocked' | 'expired' | 'selected';
 
@@ -32,12 +34,7 @@ function parseTime(timeStr: string): { h: number; m: number } {
 }
 
 /**
- * Generate time slots for a given doctor + date.
- *
- * In demo mode (no Supabase), generates 30-min slots 9 AM – 6 PM
- * with deterministic booked/break patterns from static appointment data.
- *
- * In Supabase mode, uses real availability rules, blocks, and booked appointments.
+ * Generate time slots for a given doctor + date via Express API (or Supabase / static fallback).
  */
 export async function generateSlots(
   doctorId: string,
@@ -57,29 +54,41 @@ export async function generateSlots(
     targetDate = new Date(dateStr);
   }
 
-  const weekday = targetDate.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+  const isoDate = targetDate.toISOString().slice(0, 10);
 
-  // Default working hours and slot duration
+  // 1. Try Express API backend first
+  try {
+    const res = await fetch(`${API_BASE_URL}/slots?doctorId=${encodeURIComponent(doctorId)}&date=${encodeURIComponent(isoDate)}`);
+    if (res.ok) {
+      const body = await res.json();
+      if (body.success && Array.isArray(body.data) && body.data.length > 0) {
+        return body.data as TimeSlot[];
+      }
+    }
+  } catch (_err) {}
+
+  // 2. Fallback to Supabase mode if configured
+  const weekday = targetDate.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
   let startH = 9, startM = 0, endH = 18, endM = 0, slotDuration = 30;
 
   if (SUPABASE_CONFIGURED) {
-    // Fetch availability rules from Supabase
-    const { data: rules } = await supabase
-      .from('doctor_availability_rules')
-      .select('*')
-      .eq('doctor_id', doctorId)
-      .eq('weekday', weekday)
-      .maybeSingle();
+    try {
+      const { data: rules } = await supabase
+        .from('doctor_availability_rules')
+        .select('*')
+        .eq('doctor_id', doctorId)
+        .eq('weekday', weekday)
+        .maybeSingle();
 
-    if (rules) {
-      const [sh, sm] = (rules.start_time as string).split(':').map(Number);
-      const [eh, em] = (rules.end_time as string).split(':').map(Number);
-      startH = sh; startM = sm; endH = eh; endM = em;
-      slotDuration = rules.slot_duration_minutes as number;
-    }
+      if (rules) {
+        const [sh, sm] = (rules.start_time as string).split(':').map(Number);
+        const [eh, em] = (rules.end_time as string).split(':').map(Number);
+        startH = sh; startM = sm; endH = eh; endM = em;
+        slotDuration = rules.slot_duration_minutes as number;
+      }
+    } catch (_) {}
   }
 
-  // Generate raw slot times
   const slots: TimeSlot[] = [];
   const cursor = new Date(targetDate);
   cursor.setHours(startH, startM, 0, 0);
@@ -97,107 +106,78 @@ export async function generateSlots(
     });
   }
 
-  // Mark expired slots (in the past)
   const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
 
   if (SUPABASE_CONFIGURED) {
-    // Fetch blocks (breaks, leaves) from Supabase
-    const dayStart = new Date(targetDate); dayStart.setHours(0, 0, 0, 0);
-    const dayEnd   = new Date(targetDate); dayEnd.setHours(23, 59, 59, 999);
+    try {
+      const dayStart = new Date(targetDate); dayStart.setHours(0, 0, 0, 0);
+      const dayEnd   = new Date(targetDate); dayEnd.setHours(23, 59, 59, 999);
 
-    const { data: blocks } = await supabase
-      .from('doctor_schedule_blocks')
-      .select('*')
-      .eq('doctor_id', doctorId)
-      .gte('start_datetime', dayStart.toISOString())
-      .lte('end_datetime', dayEnd.toISOString());
+      const { data: blocks } = await supabase
+        .from('doctor_schedule_blocks')
+        .select('*')
+        .eq('doctor_id', doctorId)
+        .gte('start_datetime', dayStart.toISOString())
+        .lte('end_datetime', dayEnd.toISOString());
 
-    // Fetch booked appointments
-    const { data: bookedAppts } = await supabase
-      .from('appointments')
-      .select('start_datetime, end_datetime')
-      .eq('doctor_id', doctorId)
-      .gte('start_datetime', dayStart.toISOString())
-      .lte('start_datetime', dayEnd.toISOString())
-      .in('status', ['upcoming', 'completed']);
+      const { data: bookedAppts } = await supabase
+        .from('appointments')
+        .select('start_datetime, end_datetime')
+        .eq('doctor_id', doctorId)
+        .gte('start_datetime', dayStart.toISOString())
+        .lte('start_datetime', dayEnd.toISOString())
+        .in('status', ['upcoming', 'completed']);
 
-    // Fetch active payment holds
-    const { data: activeHolds } = await supabase
-      .from('slot_holds')
-      .select('slot_datetime')
-      .eq('doctor_id', doctorId)
-      .gt('expires_at', new Date().toISOString())
-      .eq('confirmed', false);
+      for (const slot of slots) {
+        const { h, m } = parseTime(slot.time);
+        const slotDate = new Date(targetDate);
+        slotDate.setHours(h, m, 0, 0);
 
-    for (const slot of slots) {
-      const { h, m } = parseTime(slot.time);
-      const slotDate = new Date(targetDate);
-      slotDate.setHours(h, m, 0, 0);
+        if (slotDate < nowIST) {
+          slot.status = 'expired';
+          continue;
+        }
 
-      if (slotDate < nowIST) {
-        slot.status = 'expired';
-        continue;
-      }
+        for (const block of (blocks || [])) {
+          const blockStart = new Date(block.start_datetime as string);
+          const blockEnd   = new Date(block.end_datetime as string);
+          if (slotDate >= blockStart && slotDate < blockEnd) {
+            slot.status = block.type === 'break' ? 'break' : 'blocked';
+            slot.label  = block.type === 'break' ? 'Doctor on Break' : (block.reason as string || 'Unavailable');
+            break;
+          }
+        }
+        if (slot.status !== 'available') continue;
 
-      // Check against blocks
-      for (const block of (blocks || [])) {
-        const blockStart = new Date(block.start_datetime as string);
-        const blockEnd   = new Date(block.end_datetime as string);
-        if (slotDate >= blockStart && slotDate < blockEnd) {
-          slot.status = block.type === 'break' ? 'break' : 'blocked';
-          slot.label  = block.type === 'break' ? 'Doctor on Break' : (block.reason as string || 'Unavailable');
-          break;
+        for (const appt of (bookedAppts || [])) {
+          const apptStart = new Date(appt.start_datetime as string);
+          if (slotDate.getHours() === apptStart.getHours() && slotDate.getMinutes() === apptStart.getMinutes()) {
+            slot.status = 'booked';
+            break;
+          }
         }
       }
-      if (slot.status !== 'available') continue;
+      return slots;
+    } catch (_) {}
+  }
 
-      // Check against active payment holds
-      for (const hold of (activeHolds || [])) {
-        const holdDate = new Date(hold.slot_datetime as string);
-        if (
-          slotDate.getHours() === holdDate.getHours() &&
-          slotDate.getMinutes() === holdDate.getMinutes() &&
-          slotDate.getDate() === holdDate.getDate()
-        ) {
-          slot.status = 'blocked';
-          slot.label = 'Payment Pending';
-          break;
-        }
-      }
-      if (slot.status !== 'available') continue;
+  // Demo fallback
+  const bookedTimes = existingAppointments
+    .filter(a => a.doctorId === doctorId && a.status === 'upcoming')
+    .map(a => a.timeSlot);
 
-      // Check against booked appointments
-      for (const appt of (bookedAppts || [])) {
-        const apptStart = new Date(appt.start_datetime as string);
-        if (
-          slotDate.getHours() === apptStart.getHours() &&
-          slotDate.getMinutes() === apptStart.getMinutes()
-        ) {
-          slot.status = 'booked';
-          break;
-        }
-      }
-    }
-  } else {
-    // Demo mode: mark some slots as booked/break deterministically
-    const bookedTimes = existingAppointments
-      .filter(a => a.doctorId === doctorId && a.status === 'upcoming')
-      .map(a => a.timeSlot);
+  for (const slot of slots) {
+    const { h } = parseTime(slot.time);
+    const slotDate = new Date(targetDate);
+    slotDate.setHours(h, 0, 0, 0);
 
-    for (const slot of slots) {
-      const { h, m } = parseTime(slot.time);
-      const slotDate = new Date(targetDate);
-      slotDate.setHours(h, m, 0, 0);
-
-      if (slotDate < nowIST) {
-        slot.status = 'expired';
-      } else if (bookedTimes.includes(slot.time)) {
-        slot.status = 'booked';
-      } else if (h >= 13 && h < 14) {
-        // 1 PM – 2 PM: Lunch break
-        slot.status = 'break';
-        slot.label = 'Doctor on Break';
-      }
+    if (slotDate < nowIST) {
+      slot.status = 'expired';
+    } else if (bookedTimes.includes(slot.time)) {
+      slot.status = 'booked';
+    } else if (h >= 13 && h < 14) {
+      slot.status = 'break';
+      slot.label = 'Doctor on Break';
     }
   }
 

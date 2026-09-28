@@ -1,5 +1,7 @@
-import { patientSupabase, SUPABASE_CONFIGURED } from './supabase';
 import { Appointment } from '../types';
+import { patientSupabase, SUPABASE_CONFIGURED } from './supabase';
+
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
 
 /** Generate a receipt number like AGC-2026-89421 */
 function genReceiptNumber(): string {
@@ -8,7 +10,7 @@ function genReceiptNumber(): string {
   return `AGC-${year}-${rand}`;
 }
 
-/** Generate appointment ID like MCI-2026-XXXXX */
+/** Generate appointment ID like AGC-APT-2026-XXXXX */
 function genAppointmentId(): string {
   const year = new Date().getFullYear();
   const rand = Math.floor(10000 + Math.random() * 89999);
@@ -66,7 +68,7 @@ export interface CreateAppointmentPayload {
 }
 
 /**
- * Creates an appointment in Supabase (or returns a local Appointment object in demo mode).
+ * Creates an appointment (returns local Appointment model object).
  */
 export async function createAppointment(
   payload: CreateAppointmentPayload
@@ -114,12 +116,10 @@ export async function createAppointment(
   };
 
   if (!SUPABASE_CONFIGURED || !payload.patientId) {
-    // Demo mode — return local appointment
     return localAppt;
   }
 
   try {
-    // Build ISO datetime strings for the selected slot (IST)
     const dateObj = resolveDate(payload.date);
     const { h: sh, m: sm } = parseTime(payload.timeSlot);
     const { h: eh, m: em } = parseTime(payload.timeSlotEnd);
@@ -152,123 +152,132 @@ export async function createAppointment(
     }).select().single();
 
     if (error) throw error;
-
-    // Also insert payment record
-    await patientSupabase.from('payments').insert({
-      appointment_id: data.id,
-      payment_method: payload.paymentMethod,
-      amount_inr: payload.totalINR,
-      status: 'paid',
-      paid_at: new Date().toISOString(),
-    });
-
     return { ...localAppt, id: data.id };
   } catch (err) {
-    console.warn('[MediNest] Supabase insert failed, using local:', err);
     return localAppt;
   }
 }
 
 /**
- * Fetches all appointments for the currently logged-in patient from Supabase.
- * Returns empty array in demo mode (caller uses localStorage).
+ * Fetches all appointments for the logged-in patient from Express REST API (or Supabase fallback).
  */
 export async function fetchPatientAppointments(): Promise<Appointment[]> {
-  if (!SUPABASE_CONFIGURED) return [];
+  try {
+    const res = await fetch(`${API_BASE_URL}/appointments/patient`);
+    if (res.ok) {
+      const body = await res.json();
+      if (body.success && Array.isArray(body.data)) {
+        return body.data;
+      }
+    }
+  } catch (_err) {}
 
-  const { data: sessionData } = await patientSupabase.auth.getSession();
-  const userId = sessionData.session?.user?.id;
-  if (!userId) return [];
+  if (SUPABASE_CONFIGURED) {
+    try {
+      const { data: sessionData } = await patientSupabase.auth.getSession();
+      const userId = sessionData.session?.user?.id;
+      if (!userId) return [];
 
-  const { data, error } = await patientSupabase
-    .from('appointments')
-    .select(`
-      *,
-      doctor_profiles(name, photo, specialty, clinic_name, clinic_address, city)
-    `)
-    .eq('patient_id', userId)
-    .order('start_datetime', { ascending: false });
+      const { data, error } = await patientSupabase
+        .from('appointments')
+        .select(`*, doctor_profiles(name, photo, specialty, clinic_name, clinic_address, city)`)
+        .eq('patient_id', userId)
+        .order('start_datetime', { ascending: false });
 
-  if (error || !data) return [];
+      if (!error && data) {
+        return data.map((row) => {
+          const dp = (row.doctor_profiles as Record<string, unknown>) || {};
+          return {
+            id: row.id as string,
+            doctorId: row.doctor_id as string,
+            doctorName: (dp.name as string) || 'Dr. Specialist',
+            doctorSpecialty: (dp.specialty as string) || '',
+            doctorPhoto: (dp.photo as string) || '',
+            clinicName: (dp.clinic_name as string) || '',
+            clinicAddress: (dp.clinic_address as string) || '',
+            city: (dp.city as string) || '',
+            appointmentType: row.consultation_type as 'video' | 'clinic',
+            date: new Date(row.start_datetime as string).toLocaleDateString('en-IN', {
+              weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
+            }),
+            timeSlot: `${new Date(row.start_datetime as string).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}`,
+            patientName: (row.patient_name as string) || '',
+            patientAge: (row.patient_age as number) || 0,
+            patientGender: (row.patient_gender as 'Male' | 'Female' | 'Other') || 'Male',
+            patientPhone: (row.patient_phone as string) || '',
+            patientEmail: (row.patient_email as string) || '',
+            visitReason: (row.symptoms as string) || '',
+            feeINR: (row.fee_inr as number) || 0,
+            platformFeeINR: (row.platform_fee_inr as number) || 0,
+            taxesINR: (row.taxes_inr as number) || 0,
+            totalINR: (row.total_inr as number) || 0,
+            status: row.status as 'upcoming' | 'completed' | 'cancelled',
+            paymentMethod: 'UPI' as const,
+            paymentTransactionId: row.id as string,
+            createdAt: new Date(row.created_at as string).toLocaleDateString('en-IN', {
+              day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
+            }),
+            videoLink: (row.video_link as string) || undefined,
+            consultationNotes: (row.consultation_notes as string) || undefined,
+          } as Appointment;
+        });
+      }
+    } catch (_) {}
+  }
 
-  return data.map((row) => {
-    const dp = row.doctor_profiles as Record<string, unknown> || {};
-    const doctorName = (dp.name as string) || 'Dr. Specialist';
-    const doctorPhoto = (dp.photo as string) || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=600';
-    return {
-      id: row.id as string,
-      doctorId: row.doctor_id as string,
-      doctorName,
-      doctorSpecialty: (dp.specialty as string) || '',
-      doctorPhoto,
-      clinicName: (dp.clinic_name as string) || '',
-      clinicAddress: (dp.clinic_address as string) || '',
-      city: (dp.city as string) || '',
-      appointmentType: row.consultation_type as 'video' | 'clinic',
-      date: new Date(row.start_datetime as string).toLocaleDateString('en-IN', {
-        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
-      }),
-      timeSlot: (() => {
-        const start = new Date(row.start_datetime as string);
-        const startStr = start.toLocaleTimeString('en-IN', {
-          hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
-        }).replace(/\bam\b/, 'AM').replace(/\bpm\b/, 'PM');
-        const endStr = row.end_datetime
-          ? new Date(row.end_datetime as string).toLocaleTimeString('en-IN', {
-              hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
-            }).replace(/\bam\b/, 'AM').replace(/\bpm\b/, 'PM')
-          : computeSlotEndTime(startStr, 30);
-        return `${startStr} – ${endStr}`;
-      })(),
-      patientName: (row.patient_name as string) || '',
-      patientAge: (row.patient_age as number) || 0,
-      patientGender: (row.patient_gender as 'Male' | 'Female' | 'Other') || 'Male',
-      patientPhone: (row.patient_phone as string) || '',
-      patientEmail: (row.patient_email as string) || '',
-      visitReason: (row.symptoms as string) || '',
-      feeINR: (row.fee_inr as number) || 0,
-      platformFeeINR: (row.platform_fee_inr as number) || 0,
-      taxesINR: (row.taxes_inr as number) || 0,
-      totalINR: (row.total_inr as number) || 0,
-      status: row.status as 'upcoming' | 'completed' | 'cancelled',
-      paymentMethod: 'UPI' as const,
-      paymentTransactionId: row.id as string,
-      createdAt: new Date(row.created_at as string).toLocaleDateString('en-IN', {
-        day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
-      }),
-      videoLink: (row.video_link as string) || undefined,
-      consultationNotes: (row.consultation_notes as string) || undefined,
-    } as Appointment;
-  });
+  return [];
 }
 
 /**
- * Cancels an appointment in Supabase (or no-op in demo mode).
+ * Cancels an appointment via Express REST API or Supabase.
  */
 export async function cancelAppointmentInDB(id: string, reason?: string): Promise<void> {
-  if (!SUPABASE_CONFIGURED) return;
-  await patientSupabase
-    .from('appointments')
-    .update({ status: 'cancelled', cancellation_reason: reason || 'Patient requested cancellation' })
-    .eq('id', id);
+  try {
+    await fetch(`${API_BASE_URL}/appointments/${id}/cancel`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+  } catch (_err) {}
+
+  if (SUPABASE_CONFIGURED) {
+    try {
+      await patientSupabase
+        .from('appointments')
+        .update({ status: 'cancelled', cancellation_reason: reason || 'Patient requested cancellation' })
+        .eq('id', id);
+    } catch (_) {}
+  }
 }
 
 /**
- * Reschedules an appointment in Supabase (or no-op in demo mode).
+ * Reschedules an appointment via Express REST API or Supabase.
  */
 export async function rescheduleAppointmentInDB(
   id: string,
   newDate: string,
   newTimeSlot: string
 ): Promise<void> {
-  if (!SUPABASE_CONFIGURED) return;
   const dateObj = resolveDate(newDate);
   const { h, m } = parseTime(newTimeSlot);
   dateObj.setHours(h, m, 0, 0);
-  await patientSupabase
-    .from('appointments')
-    .update({ start_datetime: dateObj.toISOString(), status: 'upcoming' })
-    .eq('id', id);
+
+  try {
+    await fetch(`${API_BASE_URL}/appointments/${id}/reschedule`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDatetime: dateObj.toISOString() }),
+    });
+  } catch (_err) {}
+
+  if (SUPABASE_CONFIGURED) {
+    try {
+      await patientSupabase
+        .from('appointments')
+        .update({ start_datetime: dateObj.toISOString(), status: 'upcoming' })
+        .eq('id', id);
+    } catch (_) {}
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -285,7 +294,7 @@ function resolveDate(dateStr: string): Date {
 }
 
 function parseTime(timeStr: string): { h: number; m: number } {
-  const clean = timeStr.trim().replace(/\s*–\s*.*$/, ''); // strip " – end" if present
+  const clean = timeStr.trim().replace(/\s*–\s*.*$/, '');
   const [time, period] = clean.trim().split(' ');
   const [hStr, mStr] = time.split(':');
   let h = parseInt(hStr, 10);
