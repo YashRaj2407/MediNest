@@ -81,12 +81,12 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   useEffect(() => {
     if (isSignedIn && regStep === 'clerk-auth') {
       setRegStep('profile-form');
-      // Pre-fill email from Clerk
       const email = user?.primaryEmailAddress?.emailAddress || '';
+      const defaultName = user?.fullName || (user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : '');
       setRegEmail(email);
-      if (user?.fullName) setRegName(user.fullName);
+      setRegName(defaultName);
     }
-  }, [isSignedIn, regStep]);
+  }, [isSignedIn, regStep, user?.id]);
 
   // Reset on open
   useEffect(() => {
@@ -97,12 +97,12 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
       setRegError('');
       setLoginStep('form');
       setRegStep(isSignedIn ? 'profile-form' : 'clerk-auth');
-      if (isSignedIn && user) {
-        setRegEmail(user.primaryEmailAddress?.emailAddress || '');
-        if (user.fullName) setRegName(user.fullName);
-      }
+      const email = user?.primaryEmailAddress?.emailAddress || '';
+      const defaultName = user?.fullName || (user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : '');
+      setRegEmail(email);
+      setRegName(defaultName);
     }
-  }, [isOpen, initialTab]);
+  }, [isOpen, initialTab, user?.id]);
 
   // ── Photo handler ────────────────────────────────────────────────────────────
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
