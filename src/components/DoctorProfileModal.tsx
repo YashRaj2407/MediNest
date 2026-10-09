@@ -1,3 +1,4 @@
+import { formatINR } from '../lib/formatCurrency';
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -293,7 +294,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                         >
                           <span className="font-semibold text-slate-800">{srv.name}</span>
                           <span className="font-bold text-[#0C182B] bg-white px-2.5 py-1 rounded-md border border-slate-200 shadow-2xs">
-                            ₹{srv.feeINR}
+                            {formatINR(srv.feeINR)}
                           </span>
                         </div>
                       ))}
@@ -384,7 +385,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   Select Consultation Mode
                 </span>
                 <span className="text-sm font-extrabold text-[#0C182B]">
-                  ₹{doctor.feeINR}
+                  {formatINR(doctor.feeINR)}
                 </span>
               </div>
 

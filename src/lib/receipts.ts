@@ -47,7 +47,7 @@ export function generateReceiptPDF(appointment: Appointment): void {
   doc.setTextColor(...white);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  doc.text('PAID IN FULL (₹ INR)', W - 31, 15.5, { align: 'center' });
+  doc.text('PAID IN FULL (Rs.  INR)', W - 31, 15.5, { align: 'center' });
 
   // Receipt number + date
   doc.setFontSize(7.5);
@@ -149,11 +149,11 @@ export function generateReceiptPDF(appointment: Appointment): void {
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...gold);
   doc.text('DESCRIPTION', 16, y + 5.2);
-  doc.text('AMOUNT (₹ INR)', W - 14, y + 5.2, { align: 'right' });
+  doc.text('AMOUNT (Rs.  INR)', W - 14, y + 5.2, { align: 'right' });
 
   const rows: [string, string, boolean][] = [
-    [`Medical Specialist Consultation Fee (${appointment.doctorSpecialty})`, `₹${appointment.feeINR}`, false],
-    ['Platform Processing Convenience Fee', '₹0.00 (Waived)', false],
+    [`Medical Specialist Consultation Fee (${appointment.doctorSpecialty})`, `Rs. ${appointment.feeINR}`, false],
+    ['Platform Processing Convenience Fee', 'Rs. 0.00 (Waived)', false],
     ['Applicable Taxes (inclusive)', 'Included', false],
   ];
 
@@ -179,7 +179,7 @@ export function generateReceiptPDF(appointment: Appointment): void {
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...gold);
   doc.text('TOTAL AMOUNT PAID', 16, y + 6.8);
-  doc.text(`₹${appointment.totalINR}`, W - 14, y + 6.8, { align: 'right' });
+  doc.text(`Rs. ${appointment.totalINR}`, W - 14, y + 6.8, { align: 'right' });
 
   // ─── Footer ─────────────────────────────────────────────────────────────
   y += 18;

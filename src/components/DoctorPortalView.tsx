@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Phone
 } from 'lucide-react';
+import { formatINR } from '../lib/formatCurrency';
 import { DoctorAuthData, DoctorScheduleConfig, Appointment, Prescription } from '../types';
 import { DoctorScheduleTab } from './doctor/DoctorScheduleTab';
 import { DoctorAppointmentsTab } from './doctor/DoctorAppointmentsTab';
@@ -333,10 +334,10 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
                   </div>
                 </div>
                 <div className="text-3xl font-extrabold text-[#FAE58D]">
-                  ₹{totalEarningsINR.toLocaleString('en-IN')}
+                  {formatINR(totalEarningsINR)}
                 </div>
                 <div className="text-xs text-teal-200 mt-1 flex items-center justify-between">
-                  <span>₹{doctor.feeINR} / consultation</span>
+                  <span>{doctor.feeINR ? formatINR(doctor.feeINR) + ' / consultation' : 'Fee not set'}</span>
                   <ChevronRight className="w-4 h-4 text-[#FAE58D]" />
                 </div>
               </div>

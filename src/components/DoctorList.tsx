@@ -1,3 +1,4 @@
+import { formatINR } from '../lib/formatCurrency';
 ﻿import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Search, 

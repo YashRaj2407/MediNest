@@ -1,3 +1,4 @@
+import { formatINR } from '../../lib/formatCurrency';
 ﻿import React, { useState, useEffect } from 'react';
 import { IndianRupee, TrendingUp, Calendar, CreditCard, ArrowUpRight,
          CheckCircle2, Clock, Building2, Download, ShieldCheck, FileSpreadsheet } from 'lucide-react';
@@ -58,7 +59,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointmen
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#FAE58D]">
-                ₹{totalEarnings.toLocaleString('en-IN')}
+                {formatINR(totalEarnings)}
               </div>
             </div>
           </div>
@@ -74,7 +75,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointmen
           </div>
           <div>
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#032F31]">
-              ₹{todayEarnings.toLocaleString('en-IN')}
+              {formatINR(todayEarnings)}
             </div>
             <div className="text-xs text-slate-500 mt-1">
               From completed consultations today
@@ -92,7 +93,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointmen
           </div>
           <div>
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#032F31]">
-              ₹{weekEarnings.toLocaleString('en-IN')}
+              {formatINR(weekEarnings)}
             </div>
             <div className="text-xs text-slate-500 mt-1">
               Past 7 days accumulated earnings
@@ -110,7 +111,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointmen
           </div>
           <div>
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#032F31]">
-              ₹{pendingPayoutINR.toLocaleString('en-IN')}
+              {formatINR(pendingPayoutINR)}
             </div>
             <div className="text-xs text-teal-800 font-semibold mt-1 flex items-center gap-1">
               <span>Next cycle pending</span>

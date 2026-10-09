@@ -1,3 +1,4 @@
+import { formatINR } from '../lib/formatCurrency';
 import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
@@ -325,7 +326,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
               <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">System Volume</span>
-                  <span className="text-2xl font-extrabold text-slate-900 mt-1 block">₹{totalRevenueINR}</span>
+                  <span className="text-2xl font-extrabold text-slate-900 mt-1 block">{formatINR(totalRevenueINR)}</span>
                   <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1">
                     <CreditCard className="w-3 h-3" /> 100% Paid in INR
                   </span>
@@ -383,7 +384,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                         {doc.verification_status}
                       </span>
                     </div>
-                    <p className="text-[11px] text-teal-800 font-semibold">{doc.specialty} • ₹{doc.fee_inr}</p>
+                    <p className="text-[11px] text-teal-800 font-semibold">{doc.specialty} • {formatINR(doc.fee_inr)}</p>
                     <p className="text-[10px] text-slate-500">{doc.clinic_name}, {doc.city}</p>
                   </div>
                 ))}
@@ -501,7 +502,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                     </div>
 
                     <span className="text-base font-extrabold text-[#0C182B] bg-slate-50 px-3 py-1 rounded-xl border border-slate-200">
-                      ₹{doc.fee_inr}
+                      {formatINR(doc.fee_inr)}
                     </span>
                   </div>
 
@@ -592,7 +593,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                               {a.consultation_type === 'video' ? 'Video' : 'Clinic'}
                             </span>
                           </td>
-                          <td className="p-4 font-bold text-slate-900">₹{a.total_inr}</td>
+                          <td className="p-4 font-bold text-slate-900">{formatINR(a.total_inr)}</td>
                           <td className="p-4">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               a.status === 'upcoming'

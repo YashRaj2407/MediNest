@@ -1,3 +1,4 @@
+import { formatINR } from '../lib/formatCurrency';
 import React from 'react';
 import { ShieldCheck, Clock, Award, CheckCircle } from 'lucide-react';
 
@@ -51,7 +52,7 @@ export const AboutSection: React.FC = () => {
                 <div className="text-xs text-[#5D7076] mt-0.5">Positive Ratings</div>
               </div>
               <div>
-                <div className="text-2xl sm:text-3xl font-bold text-[#032F31]">₹0</div>
+                <div className="text-2xl sm:text-3xl font-bold text-[#032F31]">{formatINR(0)}</div>
                 <div className="text-xs text-[#5D7076] mt-0.5">Convenience Markup</div>
               </div>
             </div>

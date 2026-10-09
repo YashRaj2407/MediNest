@@ -1,3 +1,4 @@
+import { formatINR } from '../lib/formatCurrency';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -79,7 +80,7 @@ export const BookingPaymentModal: React.FC<BookingPaymentModalProps> = ({
 
   // Price calculations in INR strictly
   const feeINR = doctor.feeINR;
-  const platformFeeINR = 0; // Promotional ₹0
+  const platformFeeINR = 0; // Promotional {formatINR(0)}
   const taxesINR = 0; // Inclusive
   const totalINR = feeINR + platformFeeINR + taxesINR;
 
@@ -546,7 +547,7 @@ END:VCALENDAR`;
                   onClick={handleProceedToPayment}
                   className="px-6 py-2.5 rounded-xl bg-[#032F31] hover:bg-[#074245] text-white text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                 >
-                  Proceed to Payment (₹{totalINR})
+                  Proceed to Payment ({formatINR(totalINR)})
                   <ArrowRight className="w-3.5 h-3.5 text-[#FAE58D]" />
                 </button>
               </div>
@@ -570,12 +571,12 @@ END:VCALENDAR`;
                 <div className="space-y-1.5 text-xs text-slate-600">
                   <div className="flex justify-between">
                     <span>Doctor Consultation Fee</span>
-                    <span className="font-bold text-slate-900">₹{feeINR}</span>
+                    <span className="font-bold text-slate-900">{formatINR(feeINR)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span>Platform Booking Convenience Fee</span>
                     <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
-                      FREE (₹0 Promo)
+                      FREE ({formatINR(0)} Promo)
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -587,7 +588,7 @@ END:VCALENDAR`;
                 <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
                   <span className="text-xs font-bold text-[#0C182B]">Total Payable Amount</span>
                   <span className="text-xl font-bold font-display text-[#0C182B]">
-                    ₹{totalINR}
+                    {formatINR(totalINR)}
                   </span>
                 </div>
               </div>
@@ -648,7 +649,7 @@ END:VCALENDAR`;
                   ) : (
                     <>
                       <ShieldCheck className="w-4 h-4 text-[#FAE58D]" />
-                      Pay ₹{totalINR} with Razorpay
+                      Pay {formatINR(totalINR)} with Razorpay
                     </>
                   )}
                 </button>
@@ -685,7 +686,7 @@ END:VCALENDAR`;
                   </div>
                   <div className="text-right">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Amount Paid (INR)</span>
-                    <span className="text-base font-bold text-emerald-700">₹{confirmedAppointment.totalINR}</span>
+                    <span className="text-base font-bold text-emerald-700">{formatINR(confirmedAppointment.totalINR)}</span>
                   </div>
                 </div>
 
