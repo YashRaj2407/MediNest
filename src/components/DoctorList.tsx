@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import { 
   Search, 
   Filter, 
@@ -58,40 +58,20 @@ export const DoctorList: React.FC<DoctorListProps> = ({
 
   // Filtering Logic
   const filteredDoctors = useMemo(() => {
+    const isDefaultState = selectedSpecialty === "all" && selectedCity === "All Cities" && consultationTypeFilter === "all" && selectedLanguage === "all" && selectedGender === "all" && selectedExperience === 0 && !availableTodayOnly && maxFeeINR === 2000 && !searchQuery.trim();
+    
     return doctors.filter(doc => {
-      // Specialty
-      if (selectedSpecialty !== 'all' && doc.specialtyId !== selectedSpecialty) {
-        return false;
+      if (isDefaultState) {
+        return doc.isFeatured;
       }
-      // City
-      if (selectedCity !== 'All Cities' && doc.city !== selectedCity) {
-        return false;
-      }
-      // Consultation type
-      if (consultationTypeFilter !== 'all' && !doc.consultationModes.includes(consultationTypeFilter)) {
-        return false;
-      }
-      // Language
-      if (selectedLanguage !== 'all' && !doc.languages.includes(selectedLanguage)) {
-        return false;
-      }
-      // Gender
-      if (selectedGender !== 'all' && doc.gender !== selectedGender) {
-        return false;
-      }
-      // Experience
-      if (doc.experienceYears < selectedExperience) {
-        return false;
-      }
-      // Available today
-      if (availableTodayOnly && !doc.availableToday) {
-        return false;
-      }
-      // Max Fee
-      if (doc.feeINR > maxFeeINR) {
-        return false;
-      }
-      // Text Search
+      if (selectedSpecialty !== "all" && doc.specialtyId !== selectedSpecialty) return false;
+      if (selectedCity !== "All Cities" && doc.city !== selectedCity) return false;
+      if (consultationTypeFilter !== "all" && !doc.consultationModes.includes(consultationTypeFilter)) return false;
+      if (selectedLanguage !== "all" && !doc.languages.includes(selectedLanguage)) return false;
+      if (selectedGender !== "all" && doc.gender !== selectedGender) return false;
+      if (doc.experienceYears < selectedExperience) return false;
+      if (availableTodayOnly && !doc.availableToday) return false;
+      if (doc.feeINR > maxFeeINR) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = doc.name.toLowerCase().includes(q);
@@ -99,9 +79,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
         const matchHospital = doc.clinicName.toLowerCase().includes(q);
         const matchCity = doc.city.toLowerCase().includes(q);
         const matchAbout = doc.about.toLowerCase().includes(q);
-        if (!matchName && !matchSpecialty && !matchHospital && !matchCity && !matchAbout) {
-          return false;
-        }
+        if (!matchName && !matchSpecialty && !matchHospital && !matchCity && !matchAbout) return false;
       }
       return true;
     }).sort((a, b) => {
@@ -175,8 +153,8 @@ export const DoctorList: React.FC<DoctorListProps> = ({
               >
                 <option value="recommended">Recommended</option>
                 <option value="rating">Highest Rated (4.9+)</option>
-                <option value="fee-asc">Fee: Low to High (₹)</option>
-                <option value="fee-desc">Fee: High to Low (₹)</option>
+                <option value="fee-asc">Fee: Low to High (â‚¹)</option>
+                <option value="fee-desc">Fee: High to Low (â‚¹)</option>
                 <option value="experience">Experience (Years)</option>
               </select>
             </div>
@@ -355,8 +333,8 @@ export const DoctorList: React.FC<DoctorListProps> = ({
               {/* Fee Range Slider (INR Only) */}
               <div>
                 <div className="flex items-center justify-between text-xs font-bold text-[#032F31] uppercase tracking-wider mb-2">
-                  <span>Max Fee (₹ INR)</span>
-                  <span className="text-[#032F31] font-extrabold text-sm">₹{maxFeeINR}</span>
+                  <span>Max Fee (â‚¹ INR)</span>
+                  <span className="text-[#032F31] font-extrabold text-sm">â‚¹{maxFeeINR}</span>
                 </div>
                 <input
                   type="range"
@@ -368,9 +346,9 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                   className="w-full accent-[#032F31] cursor-pointer"
                 />
                 <div className="flex justify-between text-[10px] text-[#526368] mt-1">
-                  <span>₹499</span>
-                  <span>₹1,200</span>
-                  <span>₹2,000</span>
+                  <span>â‚¹499</span>
+                  <span>â‚¹1,200</span>
+                  <span>â‚¹2,000</span>
                 </div>
               </div>
             </div>
@@ -417,7 +395,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                         </div>
 
                         <p className="text-xs font-semibold text-[#032F31]">
-                          {doctor.specialty} • {doctor.experienceYears} Years Exp
+                          {doctor.specialty} â€¢ {doctor.experienceYears} Years Exp
                         </p>
 
                         <p className="text-xs text-[#526368] font-medium">
@@ -428,7 +406,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                         <div className="flex items-center gap-1 text-xs text-[#526368] pt-0.5">
                           <Building2 className="w-3.5 h-3.5 text-[#526368] shrink-0" />
                           <span className="truncate max-w-[240px] sm:max-w-xs">{doctor.clinicName}</span>
-                          <span>•</span>
+                          <span>â€¢</span>
                           <span className="font-semibold text-[#032F31]">{doctor.city}</span>
                         </div>
 
@@ -452,10 +430,10 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                       <div className="text-left sm:text-right">
                         <span className="text-[11px] text-[#526368] block font-medium">Consultation Fee</span>
                         <div className="text-2xl font-bold text-[#032F31]">
-                          ₹{doctor.feeINR}
+                          â‚¹{doctor.feeINR}
                         </div>
                         <span className="text-[10px] text-teal-700 font-semibold block">
-                          Fixed ₹ INR price
+                          Fixed â‚¹ INR price
                         </span>
                       </div>
 
@@ -503,3 +481,4 @@ export const DoctorList: React.FC<DoctorListProps> = ({
     </section>
   );
 };
+

@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { broadcastScheduleUpdate } from '../services/sseService.js';
 
 /**
  * GET /api/v1/appointments/patient
@@ -106,12 +107,20 @@ export async function cancelAppointment(req, res) {
     const { id } = req.params;
     const { reason } = req.body;
 
+    const [rows] = await pool.query(`SELECT doctor_id, start_datetime FROM appointments WHERE id = ?`, [id]);
+    const doctorId = rows[0]?.doctor_id;
+    const dateStr = rows[0]?.start_datetime ? new Date(rows[0].start_datetime).toISOString().slice(0, 10) : null;
+
     await pool.query(
       `UPDATE appointments
        SET status = 'cancelled', cancellation_reason = ?
        WHERE id = ?`,
       [reason || 'Patient requested cancellation', id]
     );
+
+    if (doctorId) {
+      broadcastScheduleUpdate(doctorId, { action: 'appointment_cancelled', date: dateStr });
+    }
 
     return res.json({ success: true, message: 'Appointment cancelled successfully' });
   } catch (error) {
@@ -129,12 +138,19 @@ export async function rescheduleAppointment(req, res) {
     const { id } = req.params;
     const { startDatetime, endDatetime } = req.body;
 
+    const [rows] = await pool.query(`SELECT doctor_id, start_datetime FROM appointments WHERE id = ?`, [id]);
+    const doctorId = rows[0]?.doctor_id;
+
     await pool.query(
       `UPDATE appointments
        SET start_datetime = ?, end_datetime = ?, status = 'upcoming'
        WHERE id = ?`,
       [startDatetime, endDatetime, id]
     );
+
+    if (doctorId) {
+      broadcastScheduleUpdate(doctorId, { action: 'appointment_rescheduled' });
+    }
 
     return res.json({ success: true, message: 'Appointment rescheduled successfully' });
   } catch (error) {

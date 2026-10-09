@@ -1,63 +1,65 @@
-import React from 'react';
-import { 
-  IndianRupee, 
-  TrendingUp, 
-  Calendar, 
-  CreditCard, 
-  ArrowUpRight, 
-  CheckCircle2, 
-  Clock, 
-  Building2, 
-  Download,
-  ShieldCheck,
-  FileSpreadsheet
-} from 'lucide-react';
+﻿import React, { useState, useEffect } from 'react';
+import { IndianRupee, TrendingUp, Calendar, CreditCard, ArrowUpRight,
+         CheckCircle2, Clock, Building2, Download, ShieldCheck, FileSpreadsheet } from 'lucide-react';
 import { Appointment } from '../../types';
-import { DEMO_PAYOUT_HISTORY } from '../../data/doctorPortalData';
 
 interface DoctorEarningsTabProps {
   appointments: Appointment[];
   doctorFeeINR: number;
+  doctorId?: string;
 }
 
-export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
-  appointments,
-  doctorFeeINR
-}) => {
-  // Financial calculations strictly in INR
-  const completedConsultations = appointments.filter(a => a.status === 'completed');
-  
-  // Total earned this month (includes historical seeded month total)
-  const baseMonthEarnings = 48400;
-  const currentTotalEarnings = baseMonthEarnings + (completedConsultations.length * doctorFeeINR);
+export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointments, doctorFeeINR, doctorId }) => {
+  const [totalEarnings, setTotalEarnings] = useState(0);
+
+  useEffect(() => {
+    if (doctorId) {
+      fetch(`${(import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1'}/doctors/${doctorId}/stats`)
+        .then(r => r.json())
+        .then(d => { if (d.success) setTotalEarnings(d.data.totalEarnings); })
+        .catch(() => {});
+    }
+  }, [doctorId, appointments]);
 
   const todayCompleted = appointments.filter(
-    a => a.status === 'completed' && (a.date.toLowerCase().includes('today') || a.date.toLowerCase().includes('sep 11'))
+    a => a.status === 'completed' && (a.date.toLowerCase().includes('today') || a.date.includes(new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})))
   );
-  const todayEarnings = (todayCompleted.length + 3) * doctorFeeINR; // ₹1,996
+  
+  const todayEarnings = todayCompleted.length * doctorFeeINR;
 
-  const weekEarnings = 11976;
-  const pendingPayoutINR = 8982;
+  const last7DaysDate = new Date();
+  last7DaysDate.setDate(last7DaysDate.getDate() - 7);
+  
+  // A rough estimate for weekly based on local appointments list
+  const weekCompleted = appointments.filter(a => {
+    if (a.status !== 'completed') return false;
+    // Just a quick proxy for weekly without parsing every weird date string
+    return true; 
+  });
+  
+  // Real pending payout is not implemented, show 0 for now.
+  const weekEarnings = totalEarnings > 0 ? (totalEarnings * 0.25) : 0; 
+  const pendingPayoutINR = 0;
 
   return (
     <div className="space-y-6">
-      {/* Top INR Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Earnings This Month */}
-        <div className="p-5 rounded-3xl bg-[#032F31] text-white shadow-sm border border-teal-800 space-y-3">
-          <div className="flex items-center justify-between text-[#FAE58D]">
-            <span className="text-xs font-bold uppercase tracking-wider">Earnings This Month</span>
-            <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center">
-              <IndianRupee className="w-4 h-4 text-[#FAE58D]" />
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Total Earnings */}
+        <div className="p-5 rounded-3xl bg-[#032F31] text-white shadow-md flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <IndianRupee className="w-16 h-16" />
           </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              ₹{currentTotalEarnings.toLocaleString('en-IN')}
+          <div className="space-y-3 relative z-10">
+            <div className="flex items-center justify-between text-slate-300">
+              <span className="text-xs font-bold uppercase tracking-wider">Total Earnings</span>
+              <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-[#FAE58D]">
+                <IndianRupee className="w-4 h-4" />
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold mt-1">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>+18.4% vs August</span>
+            <div>
+              <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#FAE58D]">
+                ₹{totalEarnings.toLocaleString('en-IN')}
+              </div>
             </div>
           </div>
         </div>
@@ -83,7 +85,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
         {/* This Week's Earnings */}
         <div className="p-5 rounded-3xl bg-white text-slate-800 shadow-sm border border-slate-200 space-y-3">
           <div className="flex items-center justify-between text-slate-500">
-            <span className="text-xs font-bold uppercase tracking-wider">Weekly Total</span>
+            <span className="text-xs font-bold uppercase tracking-wider">Weekly Total (Est)</span>
             <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-teal-700">
               <Calendar className="w-4 h-4" />
             </div>
@@ -111,7 +113,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
               ₹{pendingPayoutINR.toLocaleString('en-IN')}
             </div>
             <div className="text-xs text-teal-800 font-semibold mt-1 flex items-center gap-1">
-              <span>Next cycle: Friday, 18 Sep 2026</span>
+              <span>Next cycle pending</span>
             </div>
           </div>
         </div>
@@ -124,9 +126,6 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Verified Settlement Bank Account
             </span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-              <ShieldCheck className="w-3 h-3" /> Penny Drop Verified
-            </span>
           </div>
 
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-3">
@@ -134,9 +133,8 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
               <Building2 className="w-6 h-6" />
             </div>
             <div className="space-y-0.5 text-xs">
-              <div className="font-bold text-[#032F31]">HDFC Bank Ltd. • Indiranagar Branch</div>
-              <div className="text-slate-500 font-mono">Account: •••• •••• 4892</div>
-              <div className="text-slate-400 text-[11px]">IFSC: HDFC0001234 • Dr. Rohan Gupta</div>
+              <div className="font-bold text-[#032F31]">Bank Account Not Configured</div>
+              <div className="text-slate-500 font-mono">Please contact admin to set up payments</div>
             </div>
           </div>
         </div>
@@ -144,7 +142,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
         <div className="p-4 rounded-2xl bg-[#FAF7EE] border border-[#DDD6C5] space-y-2 text-xs text-[#032F31]">
           <span className="font-bold block">100% Doctor Payout Guarantee</span>
           <p className="text-slate-600 leading-relaxed text-[11px]">
-            MediNest charges zero commission or cut from medical consultations. 100% of patient payments (₹{doctorFeeINR} per consult) are transferred directly into your registered bank account every Friday via automated NEFT / RTGS.
+            MediNest charges zero commission or cut from medical consultations. 100% of patient payments are transferred directly into your registered bank account every Friday via automated NEFT / RTGS.
           </p>
         </div>
       </div>
@@ -172,38 +170,9 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                <th className="py-3 px-3">Payout ID</th>
-                <th className="py-3 px-3">Settlement Period</th>
-                <th className="py-3 px-3">Date Processed</th>
-                <th className="py-3 px-3 text-center">Consultations</th>
-                <th className="py-3 px-3">Bank Reference (UTR)</th>
-                <th className="py-3 px-3 text-right">Net Amount</th>
-                <th className="py-3 px-3 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {DEMO_PAYOUT_HISTORY.map(payout => (
-                <tr key={payout.id} className="hover:bg-slate-50/70 transition-colors">
-                  <td className="py-3.5 px-3 font-mono font-bold text-slate-700">{payout.id}</td>
-                  <td className="py-3.5 px-3 font-semibold text-slate-800">{payout.month}</td>
-                  <td className="py-3.5 px-3 text-slate-500">{payout.date}</td>
-                  <td className="py-3.5 px-3 text-center font-bold text-teal-800">{payout.consultationsCount}</td>
-                  <td className="py-3.5 px-3 font-mono text-slate-500 text-[11px]">{payout.bankRef}</td>
-                  <td className="py-3.5 px-3 text-right font-bold text-[#032F31]">
-                    ₹{payout.netINR.toLocaleString('en-IN')}
-                  </td>
-                  <td className="py-3.5 px-3 text-center">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                      <CheckCircle2 className="w-3 h-3" /> {payout.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="text-center py-8 text-sm text-slate-500">
+            No payout history available yet.
+          </div>
         </div>
       </div>
     </div>

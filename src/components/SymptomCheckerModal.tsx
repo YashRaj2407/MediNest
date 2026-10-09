@@ -30,14 +30,33 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
   onSelectDoctorForBooking,
   onFilterSpecialty
 }) => {
-  const [selectedTags, setSelectedTags] = useState<string[]>(['fever']);
+  const [selectedTags, setSelectedTags] = useState<string[]>(['Fever & Chills']);
   const [customText, setCustomText] = useState('');
   const [severity, setSeverity] = useState<'mild' | 'moderate' | 'severe'>('moderate');
   const [duration, setDuration] = useState<string>('2-3 days');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<ReturnType<typeof analyzeSymptomsEngine> | null>(null);
 
-  if (!isOpen) return null;
+  // Find matching doctors for the suggested specialty (all matching, no slice)
+  const matchingDoctors = React.useMemo(() => {
+    if (!analysisResult) return [];
+    const targetSpecId = analysisResult.specialtyId.toLowerCase().replace(/[^a-z]/g, '');
+    const targetSpecName = analysisResult.primarySpecialty.toLowerCase();
+
+    return doctors.filter(d => {
+      const dSpecId = (d.specialtyId || '').toLowerCase().replace(/[^a-z]/g, '');
+      const dSpec = (d.specialty || '').toLowerCase();
+      return (
+        dSpecId === targetSpecId ||
+        dSpec.includes(targetSpecName) ||
+        targetSpecName.includes(dSpec) ||
+        (targetSpecId.includes('general') && dSpecId.includes('general')) ||
+        (targetSpecId.includes('ortho') && dSpecId.includes('ortho')) ||
+        (targetSpecId.includes('derma') && dSpecId.includes('derma')) ||
+        (targetSpecId.includes('cardio') && dSpecId.includes('cardio'))
+      );
+    });
+  }, [analysisResult, doctors]);
 
   const toggleTag = (tagName: string) => {
     if (selectedTags.includes(tagName)) {
@@ -58,18 +77,15 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
 
   const handleReset = () => {
     setAnalysisResult(null);
-    setSelectedTags(['fever']);
+    setSelectedTags(['Fever & Chills']);
     setCustomText('');
     setSeverity('moderate');
   };
 
-  // Find matching doctors for the suggested specialty
-  const matchingDoctors = analysisResult
-    ? doctors.filter(d => d.specialtyId === analysisResult.specialtyId).slice(0, 3)
-    : [];
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fadeIn">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 animate-fadeIn pt-8 sm:pt-12">
       <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
         {/* Header */}
         <div className="bg-[#0C182B] text-white p-6 relative">
@@ -94,7 +110,7 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 max-h-[75vh] overflow-y-auto space-y-6">
+        <div className="p-6 space-y-6">
           {!analysisResult ? (
             <>
               {/* Common Symptoms Cloud */}

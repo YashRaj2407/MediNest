@@ -1,5 +1,4 @@
 import { Appointment } from '../types';
-import { patientSupabase, SUPABASE_CONFIGURED } from './supabase';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
 
@@ -115,51 +114,11 @@ export async function createAppointment(
     videoLink: payload.videoLink,
   };
 
-  if (!SUPABASE_CONFIGURED || !payload.patientId) {
-    return localAppt;
-  }
-
-  try {
-    const dateObj = resolveDate(payload.date);
-    const { h: sh, m: sm } = parseTime(payload.timeSlot);
-    const { h: eh, m: em } = parseTime(payload.timeSlotEnd);
-
-    const startDT = new Date(dateObj);
-    startDT.setHours(sh, sm, 0, 0);
-    const endDT = new Date(dateObj);
-    endDT.setHours(eh, em, 0, 0);
-
-    const { data, error } = await patientSupabase.from('appointments').insert({
-      id,
-      patient_id: payload.patientId,
-      doctor_id: payload.doctorId,
-      consultation_type: payload.consultationType,
-      start_datetime: startDT.toISOString(),
-      end_datetime: endDT.toISOString(),
-      symptoms: payload.visitReason,
-      status: 'upcoming',
-      payment_status: 'paid',
-      total_inr: payload.totalINR,
-      fee_inr: payload.feeINR,
-      platform_fee_inr: payload.platformFeeINR,
-      taxes_inr: payload.taxesINR,
-      patient_name: payload.patientName,
-      patient_age: payload.patientAge,
-      patient_gender: payload.patientGender,
-      patient_phone: payload.patientPhone,
-      patient_email: payload.patientEmail,
-      video_link: payload.videoLink,
-    }).select().single();
-
-    if (error) throw error;
-    return { ...localAppt, id: data.id };
-  } catch (err) {
-    return localAppt;
-  }
+  return localAppt;
 }
 
 /**
- * Fetches all appointments for the logged-in patient from Express REST API (or Supabase fallback).
+ * Fetches all appointments for the logged-in patient from Express REST API.
  */
 export async function fetchPatientAppointments(): Promise<Appointment[]> {
   try {
@@ -172,64 +131,28 @@ export async function fetchPatientAppointments(): Promise<Appointment[]> {
     }
   } catch (_err) {}
 
-  if (SUPABASE_CONFIGURED) {
-    try {
-      const { data: sessionData } = await patientSupabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
-      if (!userId) return [];
+  return [];
+}
 
-      const { data, error } = await patientSupabase
-        .from('appointments')
-        .select(`*, doctor_profiles(name, photo, specialty, clinic_name, clinic_address, city)`)
-        .eq('patient_id', userId)
-        .order('start_datetime', { ascending: false });
-
-      if (!error && data) {
-        return data.map((row) => {
-          const dp = (row.doctor_profiles as Record<string, unknown>) || {};
-          return {
-            id: row.id as string,
-            doctorId: row.doctor_id as string,
-            doctorName: (dp.name as string) || 'Dr. Specialist',
-            doctorSpecialty: (dp.specialty as string) || '',
-            doctorPhoto: (dp.photo as string) || '',
-            clinicName: (dp.clinic_name as string) || '',
-            clinicAddress: (dp.clinic_address as string) || '',
-            city: (dp.city as string) || '',
-            appointmentType: row.consultation_type as 'video' | 'clinic',
-            date: new Date(row.start_datetime as string).toLocaleDateString('en-IN', {
-              weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
-            }),
-            timeSlot: `${new Date(row.start_datetime as string).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}`,
-            patientName: (row.patient_name as string) || '',
-            patientAge: (row.patient_age as number) || 0,
-            patientGender: (row.patient_gender as 'Male' | 'Female' | 'Other') || 'Male',
-            patientPhone: (row.patient_phone as string) || '',
-            patientEmail: (row.patient_email as string) || '',
-            visitReason: (row.symptoms as string) || '',
-            feeINR: (row.fee_inr as number) || 0,
-            platformFeeINR: (row.platform_fee_inr as number) || 0,
-            taxesINR: (row.taxes_inr as number) || 0,
-            totalINR: (row.total_inr as number) || 0,
-            status: row.status as 'upcoming' | 'completed' | 'cancelled',
-            paymentMethod: 'UPI' as const,
-            paymentTransactionId: row.id as string,
-            createdAt: new Date(row.created_at as string).toLocaleDateString('en-IN', {
-              day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
-            }),
-            videoLink: (row.video_link as string) || undefined,
-            consultationNotes: (row.consultation_notes as string) || undefined,
-          } as Appointment;
-        });
+/**
+ * Fetches all appointments for a specific doctor from Express REST API.
+ */
+export async function fetchDoctorAppointments(doctorId: string): Promise<Appointment[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/appointments/doctor/${encodeURIComponent(doctorId)}`);
+    if (res.ok) {
+      const body = await res.json();
+      if (body.success && Array.isArray(body.data)) {
+        return body.data;
       }
-    } catch (_) {}
-  }
+    }
+  } catch (_err) {}
 
   return [];
 }
 
 /**
- * Cancels an appointment via Express REST API or Supabase.
+ * Cancels an appointment via Express REST API.
  */
 export async function cancelAppointmentInDB(id: string, reason?: string): Promise<void> {
   try {
@@ -239,19 +162,10 @@ export async function cancelAppointmentInDB(id: string, reason?: string): Promis
       body: JSON.stringify({ reason }),
     });
   } catch (_err) {}
-
-  if (SUPABASE_CONFIGURED) {
-    try {
-      await patientSupabase
-        .from('appointments')
-        .update({ status: 'cancelled', cancellation_reason: reason || 'Patient requested cancellation' })
-        .eq('id', id);
-    } catch (_) {}
-  }
 }
 
 /**
- * Reschedules an appointment via Express REST API or Supabase.
+ * Reschedules an appointment via Express REST API.
  */
 export async function rescheduleAppointmentInDB(
   id: string,
@@ -269,15 +183,6 @@ export async function rescheduleAppointmentInDB(
       body: JSON.stringify({ startDatetime: dateObj.toISOString() }),
     });
   } catch (_err) {}
-
-  if (SUPABASE_CONFIGURED) {
-    try {
-      await patientSupabase
-        .from('appointments')
-        .update({ start_datetime: dateObj.toISOString(), status: 'upcoming' })
-        .eq('id', id);
-    } catch (_) {}
-  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

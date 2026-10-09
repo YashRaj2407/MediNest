@@ -2,6 +2,7 @@ import pool from '../config/db.js';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import dotenv from 'dotenv';
+import { broadcastScheduleUpdate } from '../services/sseService.js';
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });
@@ -10,10 +11,30 @@ const razorpayKeyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_K
 const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
 
 /**
+ * Format a Date object or date/time string to MySQL 'YYYY-MM-DD HH:MM:SS' in IST (+05:30)
+ */
+function toMySQLDatetime(dateVal) {
+  if (!dateVal) return null;
+  if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateVal)) {
+    return dateVal;
+  }
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return null;
+  // Convert UTC to IST (+05:30)
+  const istTime = new Date(d.getTime() + (5.5 * 60 * 60 * 1000));
+  return istTime.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
  * POST /api/v1/payments/create-order
  * Creates a Razorpay order and holds the requested slot in MySQL.
  */
 export async function createRazorpayOrder(req, res) {
+  if (!razorpayKeyId || !razorpayKeySecret) {
+    console.error('[Razorpay Config Error] Missing server-side Razorpay credentials (RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET).');
+    return res.status(500).json({ error: 'Razorpay credentials are not configured on the server.' });
+  }
+
   const connection = await pool.getConnection();
   try {
     const { amount_inr, appointment_ref, doctor_id, slot_datetime } = req.body;
@@ -22,19 +43,23 @@ export async function createRazorpayOrder(req, res) {
       return res.status(400).json({ error: 'amount_inr and appointment_ref are required' });
     }
 
+    const formattedSlotDatetime = toMySQLDatetime(slot_datetime);
+
     await connection.beginTransaction();
 
     // 1. Check double-booking & active unexpired slot holds
-    if (doctor_id && slot_datetime) {
+    if (doctor_id && formattedSlotDatetime) {
+      console.log(`[Slot Check] Checking conflicts for doctor=${doctor_id} at slot=${formattedSlotDatetime}`);
       const [existingAppts] = await connection.query(
         `SELECT id FROM appointments 
          WHERE doctor_id = ? AND start_datetime = ? AND status IN ('upcoming', 'completed')
          FOR UPDATE`,
-        [doctor_id, slot_datetime]
+        [doctor_id, formattedSlotDatetime]
       );
 
       if (existingAppts.length > 0) {
         await connection.rollback();
+        console.warn(`[Slot Check Conflict] Slot ${formattedSlotDatetime} already booked for doctor ${doctor_id}`);
         return res.status(409).json({ error: 'This time slot has already been booked by another patient.' });
       }
 
@@ -42,39 +67,59 @@ export async function createRazorpayOrder(req, res) {
         `SELECT id FROM slot_holds 
          WHERE doctor_id = ? AND slot_datetime = ? AND expires_at > NOW() AND confirmed = FALSE
          FOR UPDATE`,
-        [doctor_id, slot_datetime]
+        [doctor_id, formattedSlotDatetime]
       );
 
       if (existingHolds.length > 0) {
         await connection.rollback();
+        console.warn(`[Slot Check Conflict] Slot ${formattedSlotDatetime} currently held for doctor ${doctor_id}`);
         return res.status(409).json({ error: 'This time slot is currently on payment hold by another patient.' });
+      }
+
+      // Check if slot falls into a doctor schedule block (break / holiday / leave / blocked)
+      const [existingBlocks] = await connection.query(
+        `SELECT id, type, reason FROM doctor_schedule_blocks
+         WHERE doctor_id = ? 
+           AND start_datetime < DATE_ADD(?, INTERVAL 30 MINUTE)
+           AND end_datetime > ?
+         LIMIT 1`,
+        [doctor_id, formattedSlotDatetime, formattedSlotDatetime]
+      );
+
+      if (existingBlocks.length > 0) {
+        await connection.rollback();
+        const block = existingBlocks[0];
+        const reason = block.type === 'break' 
+          ? 'Doctor is on break during this time slot. Please choose another slot.' 
+          : (block.reason || 'This slot is no longer available. Doctor is unavailable.');
+        console.warn(`[Slot Check Blocked] Slot ${formattedSlotDatetime} blocked for doctor ${doctor_id}: ${reason}`);
+        return res.status(409).json({ error: reason });
       }
     }
 
-    // 2. Initialize Razorpay order
-    let orderId = `order_demo_${Date.now()}`;
+    // 2. Initialize Real Razorpay Order
     const amountPaise = Math.round(Number(amount_inr) * 100);
+    console.log(`[Razorpay Order] Creating order: ref=${appointment_ref} amount=INR ${amount_inr} (${amountPaise} paise)`);
 
-    if (razorpayKeyId && razorpayKeySecret) {
-      const razorpay = new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret });
-      const rzpOrder = await razorpay.orders.create({
-        amount: amountPaise,
-        currency: 'INR',
-        receipt: appointment_ref.slice(0, 40),
-        notes: { doctor_id: doctor_id || '', slot_datetime: slot_datetime || '' },
-      });
-      orderId = rzpOrder.id;
-    }
+    const razorpay = new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret });
+    const rzpOrder = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: 'INR',
+      receipt: appointment_ref.slice(0, 40),
+      notes: { doctor_id: doctor_id || '', slot_datetime: formattedSlotDatetime || '' },
+    });
+    const orderId = rzpOrder.id;
+    console.log(`[Razorpay Order Success] Order ID=${orderId}`);
 
     // 3. Create 10-min slot hold
-    if (doctor_id && slot_datetime) {
+    if (doctor_id && formattedSlotDatetime) {
       const holdId = crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // +10 minutes
 
+      console.log(`[Slot Hold] Holding slot for doctor=${doctor_id} at ${formattedSlotDatetime} for 10 minutes`);
       await connection.query(
         `INSERT INTO slot_holds (id, doctor_id, slot_datetime, order_id, expires_at, confirmed)
-         VALUES (?, ?, ?, ?, ?, FALSE)`,
-        [holdId, doctor_id, slot_datetime, orderId, expiresAt]
+         VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), FALSE)`,
+        [holdId, doctor_id, formattedSlotDatetime, orderId]
       );
     }
 
@@ -87,7 +132,7 @@ export async function createRazorpayOrder(req, res) {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('[Express Create Razorpay Order Error]:', error);
+    console.error('[Create Razorpay Order Error]:', error.message);
     return res.status(500).json({ error: error.message || 'Failed to create payment order' });
   } finally {
     connection.release();
@@ -99,76 +144,107 @@ export async function createRazorpayOrder(req, res) {
  * Verifies HMAC-SHA256 signature and confirms appointment in MySQL.
  */
 export async function verifyRazorpayPayment(req, res) {
+  if (!razorpayKeySecret) {
+    console.error('[Razorpay Config Error] Missing RAZORPAY_KEY_SECRET on server.');
+    return res.status(500).json({ error: 'Razorpay secret key is not configured on the server.' });
+  }
+
   const connection = await pool.getConnection();
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, appointment } = req.body;
 
-    if (!razorpay_order_id || !razorpay_payment_id || !appointment) {
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !appointment) {
       return res.status(400).json({ error: 'Missing required payment verification fields' });
     }
 
     // 1. HMAC Signature Verification
-    if (razorpayKeySecret && razorpay_signature) {
-      const expectedSig = crypto
-        .createHmac('sha256', razorpayKeySecret)
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest('hex');
+    console.log(`[Payment Verification] Verifying signature for order=${razorpay_order_id} payment=${razorpay_payment_id}`);
+    const expectedSig = crypto
+      .createHmac('sha256', razorpayKeySecret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
 
-      if (expectedSig !== razorpay_signature) {
-        return res.status(400).json({ error: 'Invalid payment signature. Payment verification failed.' });
-      }
+    if (expectedSig !== razorpay_signature) {
+      console.warn(`[Payment Verification Failure] Invalid signature for order=${razorpay_order_id}`);
+      return res.status(400).json({ error: 'Invalid payment signature. Verification failed.' });
     }
+    console.log(`[Payment Verification Success] Signature verified for order=${razorpay_order_id}`);
 
     await connection.beginTransaction();
 
     // 2. Lock & Confirm Slot Hold
+    console.log(`[Slot Hold] Confirming hold for order=${razorpay_order_id}`);
     await connection.query(
       `UPDATE slot_holds SET confirmed = TRUE WHERE order_id = ?`,
       [razorpay_order_id]
     );
 
-    // 3. Insert Appointment Record
+    // 3. Ensure patient profile exists in profiles table
+    const patientId = appointment.patient_id || `patient_${crypto.randomUUID()}`;
+    const patientEmail = appointment.patient_email || 'patient@medinest.in';
+    const patientName = appointment.patient_name || 'MediNest Patient';
+    const patientPhone = appointment.patient_phone || null;
+
+    console.log(`[Profile Sync] Upserting patient profile: id=${patientId}, email=${patientEmail}`);
+    await connection.query(
+      `INSERT INTO profiles (id, role, full_name, email, phone)
+       VALUES (?, 'patient', ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         full_name = COALESCE(VALUES(full_name), full_name),
+         phone = COALESCE(VALUES(phone), phone)`,
+      [patientId, patientName, patientEmail, patientPhone]
+    );
+
+    // 4. Format datetimes
+    const startDT = toMySQLDatetime(appointment.start_datetime) || toMySQLDatetime(new Date());
+    const endDT = toMySQLDatetime(appointment.end_datetime) || toMySQLDatetime(new Date(Date.now() + 30 * 60 * 1000));
+
+    // 5. Insert Appointment Record
+    console.log(`[Appointment Insert] Persisting appointment=${appointment.id} for doctor=${appointment.doctor_id}`);
     await connection.query(
       `INSERT INTO appointments (
         id, patient_id, doctor_id, consultation_type, start_datetime, end_datetime,
         symptoms, status, payment_status, total_inr, fee_inr, platform_fee_inr, taxes_inr,
         patient_name, patient_age, patient_gender, patient_phone, patient_email,
-        razorpay_order_id, razorpay_payment_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'upcoming', 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        video_link, razorpay_order_id, razorpay_payment_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'upcoming', 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE status = 'upcoming', payment_status = 'paid'`,
       [
         appointment.id,
-        appointment.patient_id || 'demo_patient_id',
+        patientId,
         appointment.doctor_id,
-        appointment.consultation_type,
-        appointment.start_datetime,
-        appointment.end_datetime,
+        appointment.consultation_type || 'video',
+        startDT,
+        endDT,
         appointment.symptoms || 'Routine consultation',
-        appointment.total_inr,
-        appointment.fee_inr,
-        appointment.platform_fee_inr || 0,
-        appointment.taxes_inr || 0,
-        appointment.patient_name,
-        appointment.patient_age,
+        Number(appointment.total_inr) || 0,
+        Number(appointment.fee_inr) || 0,
+        Number(appointment.platform_fee_inr) || 0,
+        Number(appointment.taxes_inr) || 0,
+        patientName,
+        Number(appointment.patient_age) || 30,
         appointment.patient_gender || 'Male',
-        appointment.patient_phone,
-        appointment.patient_email,
+        patientPhone || '',
+        patientEmail,
+        appointment.video_link || null,
         razorpay_order_id,
         razorpay_payment_id,
       ]
     );
 
-    // 4. Insert Payment Record
+    // 6. Insert Payment Record
     const paymentId = crypto.randomUUID();
+    console.log(`[Payment Insert] Persisting payment record id=${paymentId}`);
     await connection.query(
       `INSERT INTO payments (id, appointment_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, payment_method, amount_inr, status, paid_at)
        VALUES (?, ?, ?, ?, ?, 'Razorpay', ?, 'paid', NOW())`,
-      [paymentId, appointment.id, razorpay_order_id, razorpay_payment_id, razorpay_signature || '', appointment.total_inr]
+      [paymentId, appointment.id, razorpay_order_id, razorpay_payment_id, razorpay_signature, Number(appointment.total_inr) || 0]
     );
 
-    // 5. Insert Receipt Record
+    // 7. Insert Receipt Record
     const receiptId = crypto.randomUUID();
     const receiptNumber = `AGC-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 89999)}`;
+    console.log(`[Receipt Insert] Generating receipt=${receiptNumber}`);
     await connection.query(
       `INSERT INTO receipts (id, appointment_id, receipt_number, issued_at)
        VALUES (?, ?, ?, NOW())
@@ -178,6 +254,12 @@ export async function verifyRazorpayPayment(req, res) {
 
     await connection.commit();
 
+    // Broadcast real-time schedule update to patient browsers
+    broadcastScheduleUpdate(appointment.doctor_id, {
+      action: 'appointment_booked',
+      date: startDT ? startDT.slice(0, 10) : null,
+    });
+
     return res.json({
       success: true,
       appointment_id: appointment.id,
@@ -186,7 +268,7 @@ export async function verifyRazorpayPayment(req, res) {
     });
   } catch (error) {
     await connection.rollback();
-    console.error('[Express Verify Payment Error]:', error);
+    console.error('[Payment Verification Error]:', error.message);
     return res.status(500).json({ error: error.message || 'Payment verification failed' });
   } finally {
     connection.release();

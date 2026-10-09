@@ -24,6 +24,8 @@ import {
   openRazorpayCheckout,
   verifyRazorpayPayment,
   buildAppointmentPayload,
+  resolveDate,
+  parseTimeStr,
 } from '../lib/razorpay';
 import { generateReceiptPDF } from '../lib/receipts';
 
@@ -181,12 +183,19 @@ export const BookingPaymentModal: React.FC<BookingPaymentModalProps> = ({
       const apptId = `AGC-APT-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 89999)}`;
       const { startTime } = getSlotTimes();
 
-      // Step 1: Create Razorpay order via Edge Function (secret never leaves server)
+      // Compute standard slot ISO datetime for concurrency checks and slot holds
+      const dateObj = resolveDate(selectedDate);
+      const { h, m } = parseTimeStr(startTime);
+      const startDT = new Date(dateObj);
+      startDT.setHours(h, m, 0, 0);
+      const slotIsoDatetime = startDT.toISOString();
+
+      // Step 1: Create Razorpay order via Express backend
       const order = await createRazorpayOrder(
         totalINR,
         apptId,
         doctor.id,
-        startTime,
+        slotIsoDatetime,
       );
 
       setIsProcessingPayment(false);

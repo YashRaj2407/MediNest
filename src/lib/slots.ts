@@ -1,5 +1,4 @@
 import { Appointment } from '../types';
-import { supabase, SUPABASE_CONFIGURED } from './supabase';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
 
@@ -34,7 +33,7 @@ function parseTime(timeStr: string): { h: number; m: number } {
 }
 
 /**
- * Generate time slots for a given doctor + date via Express API (or Supabase / static fallback).
+ * Generate time slots for a given doctor + date via Express API (or static fallback).
  */
 export async function generateSlots(
   doctorId: string,
@@ -45,16 +44,21 @@ export async function generateSlots(
   // Resolve date to a real Date object (IST)
   const now = new Date();
   let targetDate: Date;
+  let isoDate: string;
   if (dateStr === 'Today' || dateStr.startsWith('Today')) {
     targetDate = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+    isoDate = targetDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   } else if (dateStr === 'Tomorrow' || dateStr.startsWith('Tomorrow')) {
     targetDate = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
     targetDate.setDate(targetDate.getDate() + 1);
+    isoDate = targetDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    isoDate = dateStr;
+    targetDate = new Date(`${dateStr}T12:00:00+05:30`);
   } else {
     targetDate = new Date(dateStr);
+    isoDate = targetDate.toISOString().slice(0, 10);
   }
-
-  const isoDate = targetDate.toISOString().slice(0, 10);
 
   // 1. Try Express API backend first
   try {
@@ -67,27 +71,9 @@ export async function generateSlots(
     }
   } catch (_err) {}
 
-  // 2. Fallback to Supabase mode if configured
+  // 2. Generate slots locally
   const weekday = targetDate.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
   let startH = 9, startM = 0, endH = 18, endM = 0, slotDuration = 30;
-
-  if (SUPABASE_CONFIGURED) {
-    try {
-      const { data: rules } = await supabase
-        .from('doctor_availability_rules')
-        .select('*')
-        .eq('doctor_id', doctorId)
-        .eq('weekday', weekday)
-        .maybeSingle();
-
-      if (rules) {
-        const [sh, sm] = (rules.start_time as string).split(':').map(Number);
-        const [eh, em] = (rules.end_time as string).split(':').map(Number);
-        startH = sh; startM = sm; endH = eh; endM = em;
-        slotDuration = rules.slot_duration_minutes as number;
-      }
-    } catch (_) {}
-  }
 
   const slots: TimeSlot[] = [];
   const cursor = new Date(targetDate);
@@ -107,59 +93,6 @@ export async function generateSlots(
   }
 
   const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-
-  if (SUPABASE_CONFIGURED) {
-    try {
-      const dayStart = new Date(targetDate); dayStart.setHours(0, 0, 0, 0);
-      const dayEnd   = new Date(targetDate); dayEnd.setHours(23, 59, 59, 999);
-
-      const { data: blocks } = await supabase
-        .from('doctor_schedule_blocks')
-        .select('*')
-        .eq('doctor_id', doctorId)
-        .gte('start_datetime', dayStart.toISOString())
-        .lte('end_datetime', dayEnd.toISOString());
-
-      const { data: bookedAppts } = await supabase
-        .from('appointments')
-        .select('start_datetime, end_datetime')
-        .eq('doctor_id', doctorId)
-        .gte('start_datetime', dayStart.toISOString())
-        .lte('start_datetime', dayEnd.toISOString())
-        .in('status', ['upcoming', 'completed']);
-
-      for (const slot of slots) {
-        const { h, m } = parseTime(slot.time);
-        const slotDate = new Date(targetDate);
-        slotDate.setHours(h, m, 0, 0);
-
-        if (slotDate < nowIST) {
-          slot.status = 'expired';
-          continue;
-        }
-
-        for (const block of (blocks || [])) {
-          const blockStart = new Date(block.start_datetime as string);
-          const blockEnd   = new Date(block.end_datetime as string);
-          if (slotDate >= blockStart && slotDate < blockEnd) {
-            slot.status = block.type === 'break' ? 'break' : 'blocked';
-            slot.label  = block.type === 'break' ? 'Doctor on Break' : (block.reason as string || 'Unavailable');
-            break;
-          }
-        }
-        if (slot.status !== 'available') continue;
-
-        for (const appt of (bookedAppts || [])) {
-          const apptStart = new Date(appt.start_datetime as string);
-          if (slotDate.getHours() === apptStart.getHours() && slotDate.getMinutes() === apptStart.getMinutes()) {
-            slot.status = 'booked';
-            break;
-          }
-        }
-      }
-      return slots;
-    } catch (_) {}
-  }
 
   // Demo fallback
   const bookedTimes = existingAppointments

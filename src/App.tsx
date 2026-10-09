@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
+import { useUser, useClerk } from '@clerk/clerk-react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { AboutSection } from './components/AboutSection';
@@ -28,13 +29,12 @@ import { AdminPortalView } from './components/AdminPortalView';
 import { INITIAL_DOCTORS } from './data/doctorsData';
 import { INITIAL_SCHEDULE_CONFIG, INITIAL_DOCTOR_APPOINTMENTS } from './data/doctorPortalData';
 import { Doctor, ConsultationType, Appointment, UserProfile, DoctorAuthData, DoctorScheduleConfig } from './types';
-import { patientSupabase, doctorSupabase, adminSupabase, SUPABASE_CONFIGURED } from './lib/supabase';
 import { fetchDoctors } from './lib/doctors';
-import { fetchPatientAppointments, cancelAppointmentInDB, rescheduleAppointmentInDB } from './lib/appointments';
+import { fetchPatientAppointments, fetchDoctorAppointments, cancelAppointmentInDB, rescheduleAppointmentInDB } from './lib/appointments';
 
 
 export default function App() {
-  // ── Master state ──────────────────────────────────────────────────────────
+  // â”€â”€ Master state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [doctors, setDoctors] = useState<Doctor[]>(INITIAL_DOCTORS);
   const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [selectedCity, setSelectedCity] = useState<string>('All Cities');
@@ -42,7 +42,11 @@ export default function App() {
   const [consultationTypeFilter, setConsultationTypeFilter] = useState<'all' | ConsultationType>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // ── Patient User State ────────────────────────────────────────────────────
+  // â”€â”€ Clerk Auth Hooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const { user: clerkUser, isLoaded: isClerkUserLoaded, isSignedIn: isClerkSignedIn } = useUser();
+  const { signOut: clerkSignOut } = useClerk();
+
+  // â”€â”€ Patient User State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('mediconnect_user');
     if (saved) {
@@ -56,7 +60,45 @@ export default function App() {
     };
   });
 
-  // ── Patient Appointments State ────────────────────────────────────────────
+  // â”€â”€ Sync Clerk User to App State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    if (!isClerkUserLoaded) return;
+    if (isClerkSignedIn && clerkUser) {
+      const email = clerkUser.primaryEmailAddress?.emailAddress || '';
+      const name = clerkUser.fullName || clerkUser.firstName || email.split('@')[0] || 'Patient';
+      const phone = clerkUser.primaryPhoneNumber?.phoneNumber || '';
+      setUser({
+        id: clerkUser.id,
+        name,
+        email,
+        phone,
+        isLoggedIn: true,
+      });
+
+      // Sync with MySQL backend
+      const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+      fetch(`${API_BASE_URL}/auth/sync-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: clerkUser.id,
+          email,
+          fullName: name,
+          role: 'patient',
+          phone,
+        }),
+      }).catch(() => {});
+    } else if (!isClerkSignedIn && user.isLoggedIn && !loggedInDoctor && !loggedInAdmin) {
+      setUser({
+        name: 'Guest Patient',
+        phone: '',
+        email: '',
+        isLoggedIn: false,
+      });
+    }
+  }, [isClerkUserLoaded, isClerkSignedIn, clerkUser]);
+
+  // â”€â”€ Patient Appointments State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [appointments, setAppointments] = useState<Appointment[]>(() => {
     const saved = localStorage.getItem('mediconnect_appointments');
     if (saved) {
@@ -65,14 +107,14 @@ export default function App() {
     return [];
   });
 
-  // ── Doctor Portal State ───────────────────────────────────────────────────
+  // â”€â”€ Doctor Portal State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [isDoctorPortalOpen, setIsDoctorPortalOpen] = useState(false);
   const [isDoctorAuthModalOpen, setIsDoctorAuthModalOpen] = useState(false);
   const [loggedInDoctor, setLoggedInDoctor] = useState<DoctorAuthData | null>(null);
   const [doctorSchedule, setDoctorSchedule] = useState<DoctorScheduleConfig>(INITIAL_SCHEDULE_CONFIG);
-  const [doctorAppointments, setDoctorAppointments] = useState<Appointment[]>(INITIAL_DOCTOR_APPOINTMENTS);
+  const [doctorAppointments, setDoctorAppointments] = useState<Appointment[]>([]);
 
-  // ── Admin Portal State ────────────────────────────────────────────────────
+  // â”€â”€ Admin Portal State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [loggedInAdmin, setLoggedInAdmin] = useState<AdminAuthData | null>(null);
@@ -83,6 +125,7 @@ export default function App() {
   const [authCallbackNotice, setAuthCallbackNotice] = useState<string | null>(null);
 
   // Detect `/admin` and `/auth/callback` URL routes on mount
+  // Detect `/admin` URL route on mount
   useEffect(() => {
     if (window.location.pathname === '/admin') {
       if (loggedInAdmin) {
@@ -91,119 +134,9 @@ export default function App() {
         setIsAdminAuthModalOpen(true);
       }
     }
-
-    // Handle Supabase Auth Callback (/auth/callback)
-    if (window.location.pathname.startsWith('/auth/callback') || window.location.hash.includes('access_token')) {
-      if (SUPABASE_CONFIGURED) {
-        patientSupabase.auth.getSession().then(({ data, error }) => {
-          if (data.session?.user) {
-            setAuthCallbackNotice('Email confirmed successfully! Your MediNest patient account is now active.');
-            setUser({
-              id: data.session.user.id,
-              name: data.session.user.user_metadata?.full_name || data.session.user.email || 'Patient',
-              phone: data.session.user.phone || '',
-              email: data.session.user.email || '',
-              isLoggedIn: true,
-            });
-            // Upsert profile in case it was pending
-            patientSupabase.from('profiles').upsert({
-              id: data.session.user.id,
-              full_name: data.session.user.user_metadata?.full_name || data.session.user.email || 'Patient',
-              email: data.session.user.email || '',
-              role: 'patient',
-            }, { onConflict: 'id' });
-          } else if (error) {
-            setAuthCallbackNotice(`Email confirmation error: ${error.message}`);
-          }
-          window.history.replaceState({}, document.title, '/');
-        });
-      } else {
-        window.history.replaceState({}, document.title, '/');
-      }
-    }
   }, [loggedInAdmin]);
 
-  // ── Supabase: Isolated auth session listeners & data loading ─────────────
-  useEffect(() => {
-    if (SUPABASE_CONFIGURED) {
-      // 1. Patient Auth Listener (medinest_patient_auth)
-      const { data: patientListener } = patientSupabase.auth.onAuthStateChange(async (event, session) => {
-        if (session?.user) {
-          const { data: profile } = await patientSupabase
-            .from('profiles')
-            .select('full_name, email, phone, role')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profile?.role === 'patient') {
-            setUser({
-              name: profile?.full_name || session.user.email || 'Patient',
-              phone: profile?.phone || '',
-              email: profile?.email || session.user.email || '',
-              isLoggedIn: true,
-            });
-
-            const remoteAppts = await fetchPatientAppointments();
-            if (remoteAppts.length > 0) {
-              setAppointments(remoteAppts);
-            }
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
-        }
-      });
-
-      // 2. Doctor Auth Listener (medinest_doctor_auth)
-      const { data: doctorListener } = doctorSupabase.auth.onAuthStateChange(async (event, session) => {
-        if (session?.user) {
-          const { data: profile } = await doctorSupabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .eq('role', 'doctor')
-            .maybeSingle();
-
-          if (profile) {
-            const { data: doctorProfile } = await doctorSupabase
-              .from('doctor_profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .maybeSingle();
-
-            setLoggedInDoctor({
-              id: session.user.id,
-              doctorId: doctorProfile?.registration_number || `DOC-${session.user.id.slice(0, 6).toUpperCase()}`,
-              name: doctorProfile?.name || profile.full_name || 'Dr. Doctor',
-              email: profile.email || session.user.email || '',
-              phone: profile.phone || '+91 0000000000',
-              specialty: doctorProfile?.specialty || 'General Physician',
-              qualifications: doctorProfile?.qualifications || 'MBBS',
-              experienceYears: doctorProfile?.experience_years || 1,
-              clinicName: doctorProfile?.clinic_name || 'Private Practice',
-              address: doctorProfile?.clinic_address || 'India',
-              city: doctorProfile?.city || 'India',
-              feeINR: doctorProfile?.fee_inr || 499,
-              rating: doctorProfile?.rating ? Number(doctorProfile.rating) : 4.8,
-              reviewCount: doctorProfile?.review_count || 1,
-              registrationNumber: doctorProfile?.registration_number || '',
-              photo: doctorProfile?.photo || profile.avatar_url || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=600',
-              languages: doctorProfile?.languages || ['English', 'Hindi'],
-              isLoggedIn: true,
-              acceptingNewAppointments: doctorProfile?.accepting_appointments ?? true,
-              consultationModes: doctorProfile?.consultation_types || ['video', 'clinic'],
-            });
-          }
-        }
-      });
-
-      return () => {
-        patientListener.subscription.unsubscribe();
-        doctorListener.subscription.unsubscribe();
-      };
-    }
-  }, []);
-
-  // ── Load doctors from Supabase (falls back to static on failure) ──────────
+  // â”€â”€ Load doctors from API (falls back to static on failure) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     setDoctorsLoading(true);
     fetchDoctors().then(data => {
@@ -213,7 +146,16 @@ export default function App() {
     });
   }, []);
 
-  // ── Sync state to localStorage ────────────────────────────────────────────
+  // â”€â”€ Load doctor appointments from MySQL whenever loggedInDoctor changes â”€â”€
+  useEffect(() => {
+    if (loggedInDoctor?.id) {
+      fetchDoctorAppointments(loggedInDoctor.id).then(data => {
+        setDoctorAppointments(data || []);
+      });
+    }
+  }, [loggedInDoctor?.id]);
+
+  // â”€â”€ Sync state to localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     localStorage.setItem('mediconnect_appointments', JSON.stringify(appointments));
   }, [appointments]);
@@ -222,7 +164,7 @@ export default function App() {
     localStorage.setItem('mediconnect_user', JSON.stringify(user));
   }, [user]);
 
-  // ── Modals & Navigation State ─────────────────────────────────────────────
+  // â”€â”€ Modals & Navigation State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [isSymptomCheckerOpen, setIsSymptomCheckerOpen] = useState(false);
   const [activeDoctorForProfile, setActiveDoctorForProfile] = useState<Doctor | null>(null);
   const [activeDoctorForBooking, setActiveDoctorForBooking] = useState<Doctor | null>(null);
@@ -243,7 +185,7 @@ export default function App() {
   const [authCustomMessage, setAuthCustomMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -256,7 +198,7 @@ export default function App() {
     }
   };
 
-  // ── Patient Handlers ──────────────────────────────────────────────────────
+  // â”€â”€ Patient Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSearchSubmit = () => scrollToSection('doctors-section');
 
   const handleSelectSpecialty = (specialtyId: string) => {
@@ -276,8 +218,8 @@ export default function App() {
         date: 'Today, Fri, 12 Sep',
         slot: '10:30 AM'
       });
-      setAuthCustomMessage(`Create a patient account to book an appointment with ${doctor.name}.`);
-      setAuthModalTab('signup');
+      setAuthCustomMessage(`Sign in or create an account to book an appointment with ${doctor.name}.`);
+      setAuthModalTab('signin');
       setIsAuthModalOpen(true);
       return;
     }
@@ -302,8 +244,8 @@ export default function App() {
         date,
         slot: timeSlot
       });
-      setAuthCustomMessage(`Create a patient account to book an appointment with ${doctor.name}.`);
-      setAuthModalTab('signup');
+      setAuthCustomMessage(`Sign in or create an account to book an appointment with ${doctor.name}.`);
+      setAuthModalTab('signin');
       setIsAuthModalOpen(true);
       return;
     }
@@ -315,11 +257,6 @@ export default function App() {
   };
 
   const handlePatientLoginSuccess = async (loggedInUser: UserProfile) => {
-    // Role isolation: sign out doctor & admin sessions
-    if (SUPABASE_CONFIGURED) {
-      try { await doctorSupabase.auth.signOut(); } catch (_) {}
-      try { await adminSupabase.auth.signOut(); } catch (_) {}
-    }
     setLoggedInDoctor(null);
     setLoggedInAdmin(null);
     setIsDoctorPortalOpen(false);
@@ -351,7 +288,7 @@ export default function App() {
       prev.map(a => a.id === id ? { ...a, status: 'cancelled' as const } : a)
     );
     cancelAppointmentInDB(id);
-    showToast('Appointment successfully cancelled. ₹ Refund initiated.');
+    showToast('Appointment successfully cancelled. â‚¹ Refund initiated.');
   };
 
   const handleRescheduleAppointment = (id: string, newDate: string, newTime: string) => {
@@ -366,7 +303,7 @@ export default function App() {
     setActiveReceiptAppointment(appt);
   };
 
-  // ── Doctor Portal Handlers ────────────────────────────────────────────────
+  // â”€â”€ Doctor Portal Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleOpenDoctorPortal = () => {
     if (user.isLoggedIn && !loggedInDoctor) {
       showToast('You are currently signed in as a Patient. Please sign out of your patient account to access the Doctor Portal.');
@@ -381,11 +318,6 @@ export default function App() {
   };
 
   const handleDoctorLoginSuccess = async (doctorData: DoctorAuthData) => {
-    // Role isolation: sign out patient & admin sessions
-    if (SUPABASE_CONFIGURED) {
-      try { await patientSupabase.auth.signOut(); } catch (_) {}
-      try { await adminSupabase.auth.signOut(); } catch (_) {}
-    }
     setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
     setLoggedInAdmin(null);
     setIsDashboardOpen(false);
@@ -398,15 +330,12 @@ export default function App() {
   };
 
   const handleDoctorLogout = async () => {
-    if (SUPABASE_CONFIGURED) {
-      try { await doctorSupabase.auth.signOut(); } catch (_) {}
-    }
     setLoggedInDoctor(null);
     setIsDoctorPortalOpen(false);
     showToast('Signed out of Doctor Portal.');
   };
 
-  // ── Admin Portal Handlers ─────────────────────────────────────────────────
+  // â”€â”€ Admin Portal Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleOpenAdminPortal = () => {
     if (user.isLoggedIn && !loggedInAdmin) {
       showToast('You are currently signed in as a Patient. Please sign out of your patient account to access the Admin Portal.');
@@ -421,11 +350,6 @@ export default function App() {
   };
 
   const handleAdminLoginSuccess = async (admin: AdminAuthData) => {
-    // Role isolation: sign out patient & doctor sessions
-    if (SUPABASE_CONFIGURED) {
-      try { await patientSupabase.auth.signOut(); } catch (_) {}
-      try { await doctorSupabase.auth.signOut(); } catch (_) {}
-    }
     setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
     setLoggedInDoctor(null);
     setIsDashboardOpen(false);
@@ -438,9 +362,6 @@ export default function App() {
   };
 
   const handleAdminLogout = async () => {
-    if (SUPABASE_CONFIGURED) {
-      try { await adminSupabase.auth.signOut(); } catch (_) {}
-    }
     setLoggedInAdmin(null);
     setIsAdminPortalOpen(false);
     showToast('Signed out of Admin Portal.');
@@ -448,7 +369,7 @@ export default function App() {
 
   const savedDoctorsList = doctors.filter(d => savedDoctorIds.includes(d.id));
 
-  // ── Admin Portal full-page view ───────────────────────────────────────────
+  // â”€â”€ Admin Portal full-page view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (isAdminPortalOpen && loggedInAdmin) {
     return (
       <AdminPortalView
@@ -459,7 +380,7 @@ export default function App() {
     );
   }
 
-  // ── Doctor Portal full-page view ──────────────────────────────────────────
+  // â”€â”€ Doctor Portal full-page view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (isDoctorPortalOpen && loggedInDoctor) {
     return (
       <DoctorPortalView
@@ -484,7 +405,7 @@ export default function App() {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>{authCallbackNotice}</span>
           </div>
-          <button onClick={() => setAuthCallbackNotice(null)} className="text-teal-200 hover:text-white text-xs cursor-pointer font-bold">✕</button>
+          <button onClick={() => setAuthCallbackNotice(null)} className="text-teal-200 hover:text-white text-xs cursor-pointer font-bold">âœ•</button>
         </div>
       )}
 
@@ -493,7 +414,7 @@ export default function App() {
         <div className="fixed bottom-6 right-6 z-50 bg-[#0C182B] text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-fadeIn text-xs font-bold">
           <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
           <span>{toastMessage}</span>
-          <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white ml-2 text-sm cursor-pointer">✕</button>
+          <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white ml-2 text-sm cursor-pointer">âœ•</button>
         </div>
       )}
 
@@ -505,6 +426,7 @@ export default function App() {
         onOpenDashboard={() => setIsDashboardOpen(true)}
         onOpenAuth={(tab = 'signin') => {
           setAuthModalTab(tab);
+          setAuthCustomMessage(null); // clear any stale booking message when user explicitly opens auth
           setIsAuthModalOpen(true);
         }}
         onOpenDoctorPortal={handleOpenDoctorPortal}
@@ -565,96 +487,112 @@ export default function App() {
 
       {/* MODALS */}
       {/* 1. AI Symptom Checker Modal */}
-      <SymptomCheckerModal
-        isOpen={isSymptomCheckerOpen}
-        onClose={() => setIsSymptomCheckerOpen(false)}
-        doctors={doctors}
-        onSelectDoctorForBooking={handleDirectBook}
-        onFilterSpecialty={(specId) => {
-          setSelectedSpecialty(specId);
-          scrollToSection('doctors-section');
-        }}
-      />
+      {isSymptomCheckerOpen && (
+        <SymptomCheckerModal
+          isOpen={isSymptomCheckerOpen}
+          onClose={() => setIsSymptomCheckerOpen(false)}
+          doctors={doctors}
+          onSelectDoctorForBooking={handleDirectBook}
+          onFilterSpecialty={(specId) => {
+            setSelectedSpecialty(specId);
+            scrollToSection('doctors-section');
+          }}
+        />
+      )}
 
       {/* 2. Doctor Detailed Profile Modal */}
-      <DoctorProfileModal
-        doctor={activeDoctorForProfile}
-        isOpen={!!activeDoctorForProfile}
-        onClose={() => setActiveDoctorForProfile(null)}
-        onProceedToBooking={handleProceedToBookingFromProfile}
-      />
+      {!!activeDoctorForProfile && (
+        <DoctorProfileModal
+          doctor={activeDoctorForProfile}
+          isOpen={!!activeDoctorForProfile}
+          onClose={() => setActiveDoctorForProfile(null)}
+          onProceedToBooking={handleProceedToBookingFromProfile}
+        />
+      )}
 
       {/* 3. Booking and Indian Payment Modal */}
-      <BookingPaymentModal
-        isOpen={!!activeDoctorForBooking}
-        onClose={() => setActiveDoctorForBooking(null)}
-        doctor={activeDoctorForBooking}
-        consultationType={bookingConsultationType}
-        selectedDate={bookingDate}
-        selectedTimeSlot={bookingSlot}
-        user={user}
-        onBookingSuccess={handleBookingSuccess}
-        onViewReceipt={handleViewReceipt}
-        onManageAppointments={() => {
-          setActiveDoctorForBooking(null);
-          setIsDashboardOpen(true);
-        }}
-      />
+      {!!activeDoctorForBooking && (
+        <BookingPaymentModal
+          isOpen={!!activeDoctorForBooking}
+          onClose={() => setActiveDoctorForBooking(null)}
+          doctor={activeDoctorForBooking}
+          consultationType={bookingConsultationType}
+          selectedDate={bookingDate}
+          selectedTimeSlot={bookingSlot}
+          user={user}
+          onBookingSuccess={handleBookingSuccess}
+          onViewReceipt={handleViewReceipt}
+          onManageAppointments={() => {
+            setActiveDoctorForBooking(null);
+            setIsDashboardOpen(true);
+          }}
+        />
+      )}
 
       {/* 5. User Account Dashboard Modal */}
-      <UserDashboardModal
-        isOpen={isDashboardOpen}
-        onClose={() => setIsDashboardOpen(false)}
-        user={user}
-        appointments={appointments}
-        savedDoctors={savedDoctorsList}
-        onCancelAppointment={handleCancelAppointment}
-        onRescheduleAppointment={handleRescheduleAppointment}
-        onViewReceipt={handleViewReceipt}
-        onBookDoctorAgain={handleDirectBook}
-        onLogout={async () => {
-          if (SUPABASE_CONFIGURED) {
-            try { await patientSupabase.auth.signOut(); } catch (_) {}
-          }
-          setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
-          setIsDashboardOpen(false);
-          showToast('Signed out of MediNest account.');
-        }}
-      />
+      {isDashboardOpen && (
+        <UserDashboardModal
+          isOpen={isDashboardOpen}
+          onClose={() => setIsDashboardOpen(false)}
+          user={user}
+          appointments={appointments}
+          savedDoctors={savedDoctorsList}
+          onCancelAppointment={handleCancelAppointment}
+          onRescheduleAppointment={handleRescheduleAppointment}
+          onViewReceipt={handleViewReceipt}
+          onBookDoctorAgain={handleDirectBook}
+          onLogout={async () => {
+            try {
+              await clerkSignOut();
+            } catch (_) {}
+            setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
+            setIsDashboardOpen(false);
+            showToast('Signed out of MediNest account.');
+          }}
+        />
+      )}
 
       {/* 6. Tax Invoice & Receipt Modal (Highest z-index overlay) */}
-      <ReceiptModal
-        isOpen={!!activeReceiptAppointment}
-        appointment={activeReceiptAppointment}
-        onClose={() => setActiveReceiptAppointment(null)}
-      />
+      {!!activeReceiptAppointment && (
+        <ReceiptModal
+          isOpen={!!activeReceiptAppointment}
+          appointment={activeReceiptAppointment}
+          onClose={() => setActiveReceiptAppointment(null)}
+        />
+      )}
 
       {/* 6. Patient Auth Modal */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        initialTab={authModalTab}
-        customMessage={authCustomMessage}
-        onClose={() => {
-          setIsAuthModalOpen(false);
-          setAuthCustomMessage(null);
-        }}
-        onLoginSuccess={handlePatientLoginSuccess}
-      />
+      {isAuthModalOpen && (
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          initialTab={authModalTab}
+          customMessage={authCustomMessage}
+          onClose={() => {
+            setIsAuthModalOpen(false);
+            setAuthCustomMessage(null);
+          }}
+          onLoginSuccess={handlePatientLoginSuccess}
+        />
+      )}
 
       {/* 7. Doctor Auth Modal */}
-      <DoctorAuthModal
-        isOpen={isDoctorAuthModalOpen}
-        onClose={() => setIsDoctorAuthModalOpen(false)}
-        onDoctorLoginSuccess={handleDoctorLoginSuccess}
-        initialTab="login"
-      />
+      {isDoctorAuthModalOpen && (
+        <DoctorAuthModal
+          isOpen={isDoctorAuthModalOpen}
+          onClose={() => setIsDoctorAuthModalOpen(false)}
+          onDoctorLoginSuccess={handleDoctorLoginSuccess}
+          initialTab="login"
+        />
+      )}
 
       {/* 8. Admin Auth Modal */}
-      <AdminAuthModal
-        isOpen={isAdminAuthModalOpen}
-        onClose={() => setIsAdminAuthModalOpen(false)}
-        onAdminLoginSuccess={handleAdminLoginSuccess}
-      />
+      {isAdminAuthModalOpen && (
+        <AdminAuthModal
+          isOpen={isAdminAuthModalOpen}
+          onClose={() => setIsAdminAuthModalOpen(false)}
+          onAdminLoginSuccess={handleAdminLoginSuccess}
+        />
+      )}
     </div>
   );
 }

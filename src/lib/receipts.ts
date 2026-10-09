@@ -1,6 +1,5 @@
 import jsPDF from 'jspdf';
 import { Appointment } from '../types';
-import { supabase, SUPABASE_CONFIGURED } from './supabase';
 import { genReceiptNumber } from './appointments';
 
 /**
@@ -212,13 +211,15 @@ export async function saveReceiptRecord(
 ): Promise<string> {
   const receiptNumber = genReceiptNumber();
 
-  if (!SUPABASE_CONFIGURED) return receiptNumber;
-
   try {
-    await supabase.from('receipts').insert({
-      appointment_id: appointmentId,
-      receipt_number: receiptNumber,
-      issued_at: new Date().toISOString(),
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+    await fetch(`${API_BASE_URL}/receipts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appointment_id: appointmentId,
+        receipt_number: receiptNumber,
+      }),
     });
   } catch (err) {
     console.warn('[MediNest] Receipt record save failed:', err);

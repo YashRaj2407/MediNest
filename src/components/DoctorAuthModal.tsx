@@ -19,8 +19,8 @@ import {
 } from 'lucide-react';
 import { SPECIALTIES, INDIAN_CITIES } from '../data/specialtiesData';
 import { DoctorAuthData } from '../types';
-import { INITIAL_DEMO_DOCTOR } from '../data/doctorPortalData';
-import { doctorSupabase, SUPABASE_CONFIGURED } from '../lib/supabase';
+
+
 
 interface DoctorAuthModalProps {
   isOpen: boolean;
@@ -58,105 +58,37 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   const [regPhone, setRegPhone] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regFeeINR, setRegFeeINR] = useState('499');
+  const [regFeeINR, setRegFeeINR] = useState('');
   const [regUploadedDocs, setRegUploadedDocs] = useState<string[]>([]);
   const [registrationSubmitted, setRegistrationSubmitted] = useState(false);
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState('');
 
   // ── Demo login (only when SUPABASE_CONFIGURED is false) ────────────────────
-  const handleDemoLogin = () => {
-    onDoctorLoginSuccess(INITIAL_DEMO_DOCTOR);
-    onClose();
-  };
+  
 
   // ── Real Supabase doctor sign-in ────────────────────────────────────────────
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-
-    if (!loginEmail.trim()) {
-      setLoginError('Please enter your registered doctor email address.');
-      return;
-    }
-
-    if (!SUPABASE_CONFIGURED) {
-      onDoctorLoginSuccess(INITIAL_DEMO_DOCTOR);
-      onClose();
-      return;
-    }
-
+    if (!loginEmail.trim()) { setLoginError('Please enter your registered doctor email address.'); return; }
     setLoginLoading(true);
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
     try {
-      const { data, error } = await doctorSupabase.auth.signInWithPassword({
-        email: loginEmail.trim().toLowerCase(),
-        password: password,
+      const res = await fetch(`${API_BASE_URL}/doctors/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim() }),
       });
-
-      if (error) {
-        setLoginError(error.message || 'Sign-in failed. Check your credentials and try again.');
+      const body = await res.json();
+      if (!res.ok || !body.success || !body.data) {
+        setLoginError(body?.error || 'No verified doctor profile found with this email.');
         return;
       }
-
-      if (!data.user) {
-        setLoginError('Authentication failed. Please try again.');
-        return;
-      }
-
-      // Fetch doctor profile from public.profiles
-      const { data: profile, error: profileError } = await doctorSupabase
-        .from('profiles')
-        .select('*')
-        .eq('id', data.user.id)
-        .eq('role', 'doctor')
-        .maybeSingle();
-
-      if (profileError || !profile) {
-        setLoginError(
-          'No verified doctor account found for this email. If you are a patient, use the Patient Sign In instead.'
-        );
-        await doctorSupabase.auth.signOut();
-        return;
-      }
-
-      // Fetch extended doctor_profiles row
-      const { data: doctorProfile } = await doctorSupabase
-        .from('doctor_profiles')
-        .select('*')
-        .eq('id', data.user.id)
-        .maybeSingle();
-
-      const doctorName = doctorProfile?.name || profile.full_name || 'Dr. Doctor';
-      const doctorPhoto = doctorProfile?.photo || profile.avatar_url || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=600';
-
-      // Build DoctorAuthData from DB data
-      const doctorData: DoctorAuthData = {
-        id: data.user.id,
-        doctorId: doctorProfile?.registration_number || `DOC-${data.user.id.slice(0, 6).toUpperCase()}`,
-        name: doctorName,
-        email: profile.email || data.user.email || '',
-        phone: profile.phone || '+91 0000000000',
-        specialty: doctorProfile?.specialty || 'General Physician',
-        qualifications: doctorProfile?.qualifications || 'MBBS',
-        experienceYears: doctorProfile?.experience_years || 1,
-        clinicName: doctorProfile?.clinic_name || 'Private Practice',
-        address: doctorProfile?.clinic_address || 'India',
-        city: doctorProfile?.city || 'India',
-        feeINR: doctorProfile?.fee_inr || 499,
-        rating: doctorProfile?.rating ? Number(doctorProfile.rating) : 4.8,
-        reviewCount: doctorProfile?.review_count || 1,
-        registrationNumber: doctorProfile?.registration_number || '',
-        photo: doctorPhoto,
-        languages: doctorProfile?.languages || ['English', 'Hindi'],
-        isLoggedIn: true,
-        acceptingNewAppointments: doctorProfile?.accepting_appointments ?? true,
-        consultationModes: doctorProfile?.consultation_types || ['video', 'clinic'],
-      };
-
-      onDoctorLoginSuccess(doctorData);
+      onDoctorLoginSuccess(body.data as DoctorAuthData);
       onClose();
     } catch (err: any) {
-      setLoginError('An unexpected error occurred. Please try again.');
+      setLoginError(`Network error connecting to doctor portal: ${err?.message || 'Server unreachable'}`);
     } finally {
       setLoginLoading(false);
     }
@@ -166,7 +98,6 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
-
     if (!regName || !regRegNumber || !regQualifications || !regPhone || !regEmail || !regPassword) {
       setRegError('Please fill all mandatory fields including password.');
       return;
@@ -176,63 +107,55 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
       return;
     }
 
-    if (!SUPABASE_CONFIGURED) {
-      // Demo mode: instant sandbox access
-      setRegistrationSubmitted(true);
-      setTimeout(() => {
-        const newDoctor: DoctorAuthData = {
-          id: `doc-${Date.now()}`,
-          doctorId: `DOC-${Math.floor(1000 + Math.random() * 9000)}`,
-          name: regName.startsWith('Dr.') ? regName : `Dr. ${regName}`,
+    setRegLoading(true);
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+    try {
+      const clerkUserId = `user_doc_${Date.now()}`; 
+      const res = await fetch(`${API_BASE_URL}/doctors/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: clerkUserId,
           email: regEmail,
-          phone: regPhone.startsWith('+91') ? regPhone : `+91 ${regPhone}`,
+          fullName: regName,
+          phone: regPhone,
+          name: regName.startsWith('Dr.') ? regName : `Dr. ${regName}`,
+          registrationNumber: regRegNumber,
           specialty: regSpecialty,
           qualifications: regQualifications,
-          experienceYears: Number(regExperience) || 5,
-          clinicName: regClinicName || 'Private Practice',
-          address: regClinicAddress || `${regCity}, India`,
-          city: regCity,
-          feeINR: Number(regFeeINR) || 499,
-          rating: 5.0,
-          reviewCount: 1,
-          registrationNumber: regRegNumber,
-          photo: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=600',
-          languages: ['English', 'Hindi'],
-          isLoggedIn: true,
-          acceptingNewAppointments: true,
-          consultationModes: ['video', 'clinic']
-        };
-        onDoctorLoginSuccess(newDoctor);
-        onClose();
-      }, 1500);
-      return;
-    }
-
-    setRegLoading(true);
-    try {
-      // 1. Create Supabase auth user
-      const { data: signUpData, error: signUpError } = await doctorSupabase.auth.signUp({
-        email: regEmail.trim().toLowerCase(),
-        password: regPassword,
-        options: {
-          data: {
-            full_name: regName.startsWith('Dr.') ? regName : `Dr. ${regName}`,
-            role: 'doctor',
-          }
-        }
+          experienceYears: Number(regExperience) || 0,
+          clinicName: regClinicName || '',
+          address: regClinicAddress || '',
+          city: regCity
+        }),
       });
-
-      if (signUpError) {
-        setRegError(signUpError.message || 'Registration failed. Please try again.');
+      
+      const body = await res.json();
+      if (!res.ok || !body.success) {
+        setRegError(body?.error || 'Failed to register doctor profile.');
+        setRegLoading(false);
         return;
       }
-
+      
       setRegistrationSubmitted(true);
-      // Doctor accounts require admin verification before portal access.
-      // We do NOT call onDoctorLoginSuccess here — they must wait for verification.
+      setTimeout(async () => {
+        try {
+          const profileRes = await fetch(`${API_BASE_URL}/doctors/profile/by-user/${clerkUserId}`);
+          const profileBody = await profileRes.json();
+          if (profileRes.ok && profileBody.success && profileBody.data) {
+            onDoctorLoginSuccess(profileBody.data as DoctorAuthData);
+            onClose();
+          } else {
+            setRegError('Registration successful, but failed to log in automatically.');
+          }
+        } catch (e) {
+          setRegError('Registration successful. Please log in.');
+        }
+        setRegLoading(false);
+      }, 1500);
+      
     } catch (err: any) {
-      setRegError('An unexpected error occurred. Please try again.');
-    } finally {
+      setRegError(`Network error: ${err?.message || 'Server unreachable'}`);
       setRegLoading(false);
     }
   };

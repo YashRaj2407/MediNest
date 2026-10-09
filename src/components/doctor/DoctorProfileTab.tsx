@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { 
   User, 
   Stethoscope, 
@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { DoctorAuthData } from '../../types';
 import { SPECIALTIES, INDIAN_CITIES } from '../../data/specialtiesData';
-import { doctorSupabase, SUPABASE_CONFIGURED } from '../../lib/supabase';
+
 
 interface DoctorProfileTabProps {
   doctor: DoctorAuthData;
@@ -36,7 +36,7 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
   const [clinicName, setClinicName] = useState(doctor.clinicName);
   const [address, setAddress] = useState(doctor.address);
   const [city, setCity] = useState(doctor.city);
-  const [feeINR, setFeeINR] = useState(doctor.feeINR.toString());
+  const [feeINR, setFeeINR] = useState(doctor.feeINR > 0 ? doctor.feeINR.toString() : "");
   const [languages, setLanguages] = useState(doctor.languages.join(', '));
   const [acceptingAppointments, setAcceptingAppointments] = useState(doctor.acceptingNewAppointments);
   const [videoConsultationEnabled, setVideoConsultationEnabled] = useState(
@@ -75,31 +75,21 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
       photo: photoUrl
     };
 
-    if (SUPABASE_CONFIGURED && doctor.id) {
-      try {
-        await doctorSupabase.from('profiles').update({
-          full_name: name,
-          avatar_url: photoUrl
-        }).eq('id', doctor.id);
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
 
-        await doctorSupabase.from('doctor_profiles').update({
-          name,
-          photo: photoUrl,
-          specialty,
+    try {
+      await fetch(`${API_BASE_URL}/doctors/${doctor.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clinicName,
+          address,
+          feeINR: Number(feeINR) || doctor.feeINR,
           qualifications,
-          experience_years: Number(experienceYears) || doctor.experienceYears,
-          clinic_name: clinicName,
-          clinic_address: address,
-          city,
-          fee_inr: Number(feeINR) || doctor.feeINR,
-          languages: parsedLanguages,
-          accepting_appointments: acceptingAppointments,
-          consultation_types: modes.length > 0 ? modes : ['video']
-        }).eq('id', doctor.id);
-      } catch (err) {
-        console.error('Failed to persist doctor profile edit to Supabase:', err);
-      }
-    }
+          acceptingAppointments,
+        }),
+      });
+    } catch (_) {}
 
     onUpdateProfile(updated);
     setSaving(false);
@@ -144,7 +134,7 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
             </div>
             <h3 className="text-xl font-bold text-[#032F31]">{doctor.name}</h3>
             <p className="text-xs text-slate-500 font-medium">
-              {doctor.qualifications} • {doctor.specialty}
+              {doctor.qualifications} â€¢ {doctor.specialty}
             </p>
             <div className="text-[11px] text-slate-400">
               Registration No: <span className="font-mono text-slate-700 font-semibold">{doctor.registrationNumber}</span>
@@ -293,10 +283,10 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Consultation Fee in ₹ INR *
+              Consultation Fee in â‚¹ INR *
             </label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-slate-500">₹</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-slate-500">â‚¹</span>
               <input
                 type="number"
                 min="99"

@@ -14,12 +14,13 @@ import {
   FileText, 
   AlertCircle,
   Share2,
-  Bookmark
+  Bookmark,
+  RefreshCw
 } from 'lucide-react';
 import { Doctor, ConsultationType } from '../types';
 import { DoctorAvatar } from './DoctorAvatar';
 import { generateSlots, TimeSlot } from '../lib/slots';
-import { patientSupabase, SUPABASE_CONFIGURED } from '../lib/supabase';
+
 
 interface DoctorProfileModalProps {
   doctor: Doctor | null;
@@ -33,14 +34,15 @@ interface DoctorProfileModalProps {
   ) => void;
 }
 
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+
 export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   doctor,
   isOpen,
   onClose,
   onProceedToBooking
 }) => {
-  if (!isOpen || !doctor) return null;
-
+  // ── ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURN ──────────────────────
   const [consultationMode, setConsultationMode] = useState<ConsultationType>('video');
   const [selectedDateIndex, setSelectedDateIndex] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState('10:30 AM');
@@ -48,15 +50,16 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'reviews' | 'clinic'>('overview');
   const [isSaved, setIsSaved] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [slotAlert, setSlotAlert] = useState<string | null>(null);
 
-  // Generate next 7 days for booking calendar (Mon, Tue... + 12 Sep, 13 Sep...)
-  const nextDays = Array.from({ length: 7 }, (_, i) => {
+  // Generate next 7 days for booking calendar — memoized so it doesn't change on every render
+  const nextDays = React.useMemo(() => Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() + i);
-    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' }); // Mon, Tue, Wed...
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
     const dayNum = d.getDate();
-    const month = d.toLocaleDateString('en-US', { month: 'short' }); // Sep
-
+    const month = d.toLocaleDateString('en-US', { month: 'short' });
     return {
       weekday,
       dateStr: `${dayNum} ${month}`,
@@ -64,45 +67,88 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
       dayName: weekday,
       isoString: d.toISOString().split('T')[0]
     };
-  });
+  }), []); // computed once per component mount
 
-  useEffect(() => {
+  const fetchFreshSlots = React.useCallback((silent = false) => {
     if (!doctor) return;
-    setLoadingSlots(true);
+    if (!silent) setLoadingSlots(true);
+    setIsRefreshing(true);
     const chosenIsoDate = nextDays[selectedDateIndex]?.isoString || new Date().toISOString().split('T')[0];
+    generateSlots(doctor.id, chosenIsoDate).then((generated) => {
+      setSlotsList(generated);
 
-    const fetchFreshSlots = () => {
-      generateSlots(doctor.id, chosenIsoDate).then((generated) => {
-        setSlotsList(generated);
+      // Check if previously selected slot has become unavailable
+      if (selectedSlot) {
+        const match = generated.find(s => s.time === selectedSlot);
+        if (match && match.status !== 'available') {
+          setSelectedSlot('');
+          setSlotAlert('This slot is no longer available. Please select another time.');
+          setTimeout(() => setSlotAlert(null), 6000);
+        }
+      }
+
+      // Auto-select first available slot if none selected
+      if (!selectedSlot) {
         const avail = generated.find(s => s.status === 'available');
-        if (avail && !generated.some(s => s.time === selectedSlot && s.status === 'available')) {
+        if (avail) {
           setSelectedSlot(avail.time);
         }
-      }).finally(() => setLoadingSlots(false));
-    };
+      }
+    }).finally(() => {
+      setLoadingSlots(false);
+      setIsRefreshing(false);
+    });
+  }, [doctor, selectedDateIndex, nextDays, selectedSlot]);
 
-    fetchFreshSlots();
+  // Load slots when doctor or selected date changes
+  useEffect(() => {
+    if (!doctor) return;
+    fetchFreshSlots(false);
+  }, [doctor?.id, selectedDateIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Supabase Realtime Slot Subscription (Requirement #13 & #14) ─────────
-    let channel: any = null;
-    if (SUPABASE_CONFIGURED) {
-      channel = patientSupabase
-        .channel(`realtime-doctor-slots-${doctor.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'doctor_schedule_blocks' }, fetchFreshSlots)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, fetchFreshSlots)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'slot_holds' }, fetchFreshSlots)
-        .subscribe();
+  // Real-time synchronization via Server-Sent Events (SSE)
+  useEffect(() => {
+    if (!doctor?.id || !isOpen) return;
+
+    const sseUrl = `${API_BASE_URL}/slots/events?doctorId=${encodeURIComponent(doctor.id)}`;
+    let eventSource: EventSource | null = null;
+
+    try {
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.addEventListener('schedule_update', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('[SSE] Received schedule_update in DoctorProfileModal:', data);
+          // Silently refresh slots without loading spinner flash
+          fetchFreshSlots(true);
+        } catch (err) {
+          console.error('[SSE Parse Error]:', err);
+        }
+      });
+
+      eventSource.onerror = (err) => {
+        console.warn('[SSE Connection Warning]: Connection dropped, will auto-reconnect.', err);
+      };
+    } catch (err) {
+      console.error('[SSE Setup Error]:', err);
     }
 
     return () => {
-      if (channel) patientSupabase.removeChannel(channel);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
-  }, [doctor, selectedDateIndex]);
+  }, [doctor?.id, isOpen, fetchFreshSlots]);
+
+  // ── EARLY RETURN GUARD (after all hooks) ───────────────────────────────────
+  if (!isOpen || !doctor) return null;
 
   const handleBook = () => {
     const chosenDate = nextDays[selectedDateIndex].fullDateString;
     onProceedToBooking(doctor, consultationMode, chosenDate, selectedSlot);
   };
+
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
@@ -408,6 +454,15 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Select Slot (Asia/Kolkata IST)
                   </label>
+                  <button
+                    type="button"
+                    onClick={fetchFreshSlots}
+                    disabled={isRefreshing}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-900 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    Refresh Availability
+                  </button>
                 </div>
 
                 {/* Status Legend */}
@@ -431,6 +486,13 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                     <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span> Payment Pending
                   </span>
                 </div>
+
+                {slotAlert && (
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>{slotAlert}</span>
+                  </div>
+                )}
 
                 {loadingSlots ? (
                   <div className="py-6 text-center text-xs text-slate-400 animate-pulse">

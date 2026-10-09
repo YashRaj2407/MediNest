@@ -12,10 +12,6 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://loca
 const RAZORPAY_KEY_ID: string =
   (import.meta as any).env?.VITE_RAZORPAY_KEY_ID ?? '';
 
-const SUPABASE_URL = 'https://rjacrstbafbfcsovgehz.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqYWNyc3RiYWZiZmNzb3ZnZWh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMzkwOTcsImV4cCI6MjEwNDcxNTA5N30.KsHhHRMnC-aTEcMtOBeZ2n7rkXBGbWRnie0iCIfRRWs';
-
 export interface RazorpayOrderResult {
   order_id: string;
   key_id: string;
@@ -32,6 +28,7 @@ export interface RazorpayVerifyResult {
   success: boolean;
   appointment_id: string;
   razorpay_payment_id: string;
+  receipt_number?: string;
 }
 
 let scriptLoaded = false;
@@ -57,9 +54,9 @@ export async function createRazorpayOrder(
   doctorId?: string,
   slotDatetime?: string,
 ): Promise<RazorpayOrderResult> {
-  // 1. Try Express backend
+  let res: Response;
   try {
-    const res = await fetch(`${API_BASE_URL}/payments/create-order`, {
+    res = await fetch(`${API_BASE_URL}/payments/create-order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,46 +66,54 @@ export async function createRazorpayOrder(
         slot_datetime: slotDatetime,
       }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data as RazorpayOrderResult;
-    }
-  } catch (_err) {}
-
-  // 2. Fallback to Supabase Edge Function
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/create-razorpay-order`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify({
-      amount_inr: amountINR,
-      appointment_ref: appointmentRef,
-      doctor_id: doctorId,
-      slot_datetime: slotDatetime,
-    }),
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error ?? 'Failed to create payment order');
+  } catch (networkErr: any) {
+    throw new Error(`Network error connecting to payment service: ${networkErr?.message || 'Unable to reach server'}`);
   }
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch (_parseErr) {
+    // Non-JSON response
+  }
+
+  if (!res.ok) {
+    const errorMsg = data?.error || data?.message || `Server returned status ${res.status}`;
+    throw new Error(`Unable to create payment order: ${errorMsg}`);
+  }
+
+  if (!data?.order_id || !data?.key_id) {
+    throw new Error('Invalid order response received from payment server.');
+  }
+
   return data as RazorpayOrderResult;
 }
 
 /** Step 2: Open Razorpay Checkout Popup */
-export function openRazorpayCheckout(
+export async function openRazorpayCheckout(
   order: RazorpayOrderResult,
   prefill: { name: string; email: string; contact: string },
   appointmentRef: string,
   onSuccess: (result: RazorpayPaymentResult) => void,
   onFailure: (error: string) => void,
-): void {
+): Promise<void> {
+  if (!order || !order.order_id) {
+    onFailure('Invalid order: missing Razorpay order ID.');
+    return;
+  }
   const keyId = order.key_id || RAZORPAY_KEY_ID;
   if (!keyId) {
-    onFailure('Razorpay Key ID is not configured. Add VITE_RAZORPAY_KEY_ID to .env.local');
+    onFailure('Razorpay Key ID is not configured. Please ensure VITE_RAZORPAY_KEY_ID is set.');
+    return;
+  }
+  if (!order.amount || order.amount <= 0) {
+    onFailure('Invalid order amount.');
+    return;
+  }
+
+  const loaded = await loadRazorpayScript();
+  if (!loaded || !(window as any).Razorpay) {
+    onFailure('Failed to load Razorpay Checkout SDK. Please check your internet connection.');
     return;
   }
 
@@ -133,11 +138,15 @@ export function openRazorpayCheckout(
     },
   };
 
-  const rzp = new (window as any).Razorpay(options);
-  rzp.on('payment.failed', (response: any) => {
-    onFailure(response?.error?.description ?? 'Payment failed');
-  });
-  rzp.open();
+  try {
+    const rzp = new (window as any).Razorpay(options);
+    rzp.on('payment.failed', (response: any) => {
+      onFailure(response?.error?.description ?? 'Payment failed');
+    });
+    rzp.open();
+  } catch (err: any) {
+    onFailure(`Could not initialize Razorpay checkout: ${err?.message || 'Unknown error'}`);
+  }
 }
 
 /** Step 3: Verify Payment */
@@ -145,9 +154,9 @@ export async function verifyRazorpayPayment(
   paymentResult: RazorpayPaymentResult,
   appointmentPayload: Record<string, unknown>,
 ): Promise<RazorpayVerifyResult> {
-  // 1. Try Express backend
+  let res: Response;
   try {
-    const res = await fetch(`${API_BASE_URL}/payments/verify`, {
+    res = await fetch(`${API_BASE_URL}/payments/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -157,32 +166,20 @@ export async function verifyRazorpayPayment(
         appointment: appointmentPayload,
       }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data as RazorpayVerifyResult;
-    }
-  } catch (_err) {}
-
-  // 2. Fallback to Supabase Edge Function
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-razorpay-payment`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify({
-      razorpay_order_id: paymentResult.razorpay_order_id,
-      razorpay_payment_id: paymentResult.razorpay_payment_id,
-      razorpay_signature: paymentResult.razorpay_signature,
-      appointment: appointmentPayload,
-    }),
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error ?? 'Payment verification failed');
+  } catch (networkErr: any) {
+    throw new Error(`Network error verifying payment: ${networkErr?.message || 'Unable to reach server'}`);
   }
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch (_parseErr) {}
+
+  if (!res.ok) {
+    const errorMsg = data?.error || data?.message || `Payment verification failed (${res.status})`;
+    throw new Error(`Payment verification failed: ${errorMsg}`);
+  }
+
   return data as RazorpayVerifyResult;
 }
 
@@ -225,7 +222,7 @@ export function buildAppointmentPayload(
   };
 }
 
-function resolveDate(dateStr: string): Date {
+export function resolveDate(dateStr: string): Date {
   const now = new Date();
   if (dateStr.startsWith('Today')) return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   if (dateStr.startsWith('Tomorrow')) {
@@ -233,16 +230,17 @@ function resolveDate(dateStr: string): Date {
     d.setDate(d.getDate() + 1);
     return d;
   }
-  return new Date(dateStr);
+  const parsed = new Date(dateStr);
+  return isNaN(parsed.getTime()) ? now : parsed;
 }
 
-function parseTimeStr(timeStr: string): { h: number; m: number } {
+export function parseTimeStr(timeStr: string): { h: number; m: number } {
   const clean = timeStr.trim().replace(/\s*–\s*.*$/, '');
   const [time, period] = clean.trim().split(' ');
-  const [hStr, mStr] = time.split(':');
+  const [hStr, mStr] = (time || '10:00').split(':');
   let h = parseInt(hStr, 10);
   const m = parseInt(mStr, 10);
   if (period?.toUpperCase() === 'PM' && h !== 12) h += 12;
   if (period?.toUpperCase() === 'AM' && h === 12) h = 0;
-  return { h, m };
+  return { h: isNaN(h) ? 10 : h, m: isNaN(m) ? 0 : m };
 }

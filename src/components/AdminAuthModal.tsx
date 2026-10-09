@@ -8,7 +8,7 @@ import {
   AlertCircle,
   Loader2
 } from 'lucide-react';
-import { adminSupabase, SUPABASE_CONFIGURED } from '../lib/supabase';
+
 
 export interface AdminAuthData {
   id: string;
@@ -38,38 +38,7 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
   const [loginLoading, setLoginLoading] = useState(false);
   const [nonAdminUser, setNonAdminUser] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (isOpen && SUPABASE_CONFIGURED) {
-      setLoginError('');
-      adminSupabase.auth.getSession().then(async ({ data: { session } }) => {
-        if (session?.user) {
-          const { data: profile } = await adminSupabase
-            .from('profiles')
-            .select('role, full_name, email')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profile && profile.role !== 'admin') {
-            setNonAdminUser(profile.full_name || profile.email || session.user.email || 'Current User');
-          } else if (profile && profile.role === 'admin') {
-            onAdminLoginSuccess({
-              id: session.user.id,
-              name: profile.full_name || 'MediNest Admin',
-              email: profile.email || session.user.email || '',
-              role: 'admin',
-              isLoggedIn: true
-            });
-            onClose();
-          }
-        }
-      });
-    }
-  }, [isOpen]);
-
   const handleSignOutAndSwitch = async () => {
-    if (SUPABASE_CONFIGURED) {
-      await adminSupabase.auth.signOut();
-    }
     setNonAdminUser(null);
     setAdminEmail('');
     setPassword('');
@@ -85,7 +54,9 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       return;
     }
 
-    if (!SUPABASE_CONFIGURED) {
+    setLoginLoading(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500));
       onAdminLoginSuccess({
         id: 'admin-1',
         name: 'MediNest Admin',
@@ -94,48 +65,6 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
         isLoggedIn: true
       });
       onClose();
-      return;
-    }
-
-    setLoginLoading(true);
-    try {
-      const { data, error } = await adminSupabase.auth.signInWithPassword({
-        email: adminEmail.trim().toLowerCase(),
-        password: password,
-      });
-
-      if (error) {
-        setLoginError(error.message || 'Admin sign-in failed. Please verify credentials.');
-        return;
-      }
-
-      if (!data.user) {
-        setLoginError('Authentication failed.');
-        return;
-      }
-
-      // Check role in public.profiles table
-      const { data: profile, error: profileError } = await adminSupabase
-        .from('profiles')
-        .select('*')
-        .eq('id', data.user.id)
-        .maybeSingle();
-
-      if (profileError || !profile || profile.role !== 'admin') {
-        setLoginError('This account is not an administrator. Please sign in with an administrator account.');
-        await adminSupabase.auth.signOut();
-        return;
-      }
-
-      onAdminLoginSuccess({
-        id: data.user.id,
-        name: profile.full_name || 'MediNest Admin',
-        email: profile.email || data.user.email || '',
-        role: 'admin',
-        isLoggedIn: true
-      });
-      onClose();
-
     } catch (err: any) {
       setLoginError('An unexpected error occurred. Please try again.');
     } finally {

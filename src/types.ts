@@ -1,4 +1,4 @@
-export type ConsultationType = 'video' | 'clinic';
+﻿export type ConsultationType = 'video' | 'clinic';
 
 export interface DoctorReview {
   id: string;
@@ -118,7 +118,7 @@ export interface DoctorAuthData {
   photo: string;
   languages: string[];
   isLoggedIn: boolean;
-  acceptingNewAppointments: boolean;
+  acceptingNewAppointments: boolean; isFeatured?: boolean;
   consultationModes: ConsultationType[];
 }
 
@@ -156,7 +156,7 @@ export interface DoctorScheduleConfig {
 }
 
 export interface UserProfile {
-  id?: string;        // Supabase auth user ID (set when patient is logged in)
+  id?: string;        // Auth user ID (set when patient is logged in)
   name: string;
   phone: string;
   email: string;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Stethoscope, 
   Calendar, 
@@ -68,7 +68,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
   const completedAppts = appointments.filter(a => a.status === 'completed');
 
   // Total Earnings in INR
-  const totalEarningsINR = 48400 + (completedAppts.length * doctor.feeINR);
+  const [totalEarningsINR, setTotalEarningsINR] = useState(0); useEffect(() => { fetch(`${(import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1'}/doctors/${doctor.id}/stats`).then(r => r.json()).then(d => { if(d.success) setTotalEarningsINR(d.data.totalEarnings); }).catch(()=>{}); }, [doctor.id, appointments]);
 
   // Next up appointment for prominent hero callout
   const nextUpAppointment = todayAppts.find(a => a.status === 'upcoming') || appointments.find(a => a.status === 'upcoming');
@@ -236,14 +236,14 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
               <div className="space-y-2 relative z-10">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FAF7EE] text-[#032F31] text-xs font-bold border border-[#DDD6C5]">
                   <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                  Today is Friday, 11 September 2026 • India Standard Time (IST)
+                  Today is {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} • India Standard Time (IST)
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#032F31]">
                   Good morning, {doctor.name}
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-600 max-w-2xl leading-relaxed">
                   You have <strong className="text-teal-800">{todayAppts.length} appointments</strong> scheduled for today at <strong>{doctor.clinicName}</strong>. 
-                  Your afternoon break is active from 03:00 PM to 05:00 PM.
+                  
                 </p>
               </div>
 
@@ -314,9 +314,9 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
                     <CheckCircle className="w-4 h-4" />
                   </div>
                 </div>
-                <div className="text-3xl font-extrabold text-[#032F31]">{completedAppts.length + 94}</div>
+                <div className="text-3xl font-extrabold text-[#032F31]">{completedAppts.length}</div>
                 <div className="text-xs text-emerald-700 font-semibold mt-1 flex items-center justify-between">
-                  <span>99.2% Patient Satisfaction</span>
+                  <span>{doctor.reviewCount > 0 ? `${doctor.rating} / 5.0 Average Rating` : 'No reviews yet'}</span>
                   <ChevronRight className="w-4 h-4 text-teal-700" />
                 </div>
               </div>
@@ -468,14 +468,6 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
                   </div>
                 ))}
 
-                {/* Afternoon Break Visual Marker */}
-                <div className="p-3.5 rounded-2xl bg-[#FAF7EE] border border-dashed border-[#DDD6C5] flex items-center justify-between text-xs text-[#032F31]">
-                  <div className="flex items-center gap-2">
-                    <Coffee className="w-4 h-4 text-amber-700" />
-                    <span className="font-bold">03:00 PM – 05:00 PM • Afternoon Break & Ward Rounds</span>
-                  </div>
-                  <span className="text-[11px] text-slate-500 font-medium">Slots Auto-Hidden to Patients</span>
-                </div>
               </div>
             </div>
           </div>
