@@ -12,7 +12,8 @@ import {
   KeyRound,
   AlertCircle,
   RefreshCw,
-  ArrowLeft
+  ArrowLeft,
+  Phone
 } from 'lucide-react';
 import { useSignIn, useSignUp } from '@clerk/clerk-react';
 import { UserProfile } from '../types';
@@ -104,10 +105,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         await setSignInActive({ session: result.createdSessionId });
 
         const userId = (result as any).createdUserId || (signIn as any)?.userData?.id;
+        const formattedPhone = phoneNumber.trim() ? (phoneNumber.trim().startsWith('+') ? phoneNumber.trim() : `+91 ${phoneNumber.trim()}`) : '';
         const loggedInUser: UserProfile = {
           id: userId || undefined,
           name: fullName.trim() || email.trim().split('@')[0],
-          phone: phoneNumber ? `+91 ${phoneNumber}` : '+91 9820145890',
+          phone: formattedPhone,
           email: email.trim(),
           isLoggedIn: true,
         };
@@ -123,7 +125,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               email: email.trim(),
               fullName: loggedInUser.name,
               role: 'patient',
-              phone: loggedInUser.phone,
+              phone: formattedPhone,
             }),
           });
         } catch (_) {}
@@ -155,6 +157,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setAuthError('Please enter your full name.');
       return;
     }
+    if (!phoneNumber.trim()) {
+      setAuthError('Please enter your mobile number.');
+      return;
+    }
     if (!email.trim() || !email.includes('@')) {
       setAuthError('Please enter a valid email address.');
       return;
@@ -176,6 +182,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
 
+      const formattedPhone = phoneNumber.trim() ? (phoneNumber.trim().startsWith('+') ? phoneNumber.trim() : `+91 ${phoneNumber.trim()}`) : '';
+
       const result = await signUp.create({
         emailAddress: email.trim(),
         password: password,
@@ -189,7 +197,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const registeredUser: UserProfile = {
           id: result.createdUserId || undefined,
           name: fullName.trim(),
-          phone: phoneNumber ? `+91 ${phoneNumber}` : '+91 9820145890',
+          phone: formattedPhone,
           email: email.trim(),
           isLoggedIn: true,
         };
@@ -205,7 +213,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               email: email.trim(),
               fullName: fullName.trim(),
               role: 'patient',
-              phone: registeredUser.phone,
+              phone: formattedPhone,
             }),
           });
         } catch (_) {}
@@ -251,10 +259,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (result.status === 'complete') {
         await setSignUpActive({ session: result.createdSessionId });
 
+        const formattedPhone = phoneNumber.trim() ? (phoneNumber.trim().startsWith('+') ? phoneNumber.trim() : `+91 ${phoneNumber.trim()}`) : '';
+
         const verifiedUser: UserProfile = {
           id: result.createdUserId || undefined,
           name: fullName.trim() || 'MediNest Patient',
-          phone: phoneNumber ? `+91 ${phoneNumber}` : '+91 9820145890',
+          phone: formattedPhone,
           email: email.trim(),
           isLoggedIn: true,
         };
@@ -447,22 +457,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             /* STEP 2: STANDARD SIGN-IN / SIGN-UP FORM */
             <form onSubmit={activeTab === 'signin' ? handleSignIn : handleSignUp} className="space-y-3.5">
               {activeTab === 'signup' && (
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                    Full Name *
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                    <input
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. Rahul Sharma"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-teal-600"
-                    />
+                <>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                      Full Name *
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <input
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        placeholder="e.g. Rahul Sharma"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-teal-600"
+                      />
+                    </div>
                   </div>
-                </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                      Mobile Number *
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <input
+                        type="tel"
+                        required
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        placeholder="e.g. 9820145890"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-teal-600"
+                      />
+                    </div>
+                  </div>
+                </>
               )}
 
               <div>

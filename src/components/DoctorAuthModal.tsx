@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Stethoscope, Lock, Mail, ShieldCheck,
   Eye, EyeOff, CheckCircle, Award, AlertCircle, Loader2,
-  Play, Camera, FileText, ChevronDown, ArrowRight, UserPlus, LogIn
+  Play, Camera, FileText, ChevronDown, ArrowRight, UserPlus, LogIn, Phone
 } from 'lucide-react';
 import { useSignIn, useSignUp, useUser, useAuth } from '@clerk/clerk-react';
 import { SPECIALTIES, INDIAN_CITIES } from '../data/specialtiesData';
@@ -57,6 +57,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
 
   // Profile form fields
   const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
   const [regRegNumber, setRegRegNumber] = useState('');
   const [regSpecialty, setRegSpecialty] = useState(SPECIALTIES[0]?.name || 'General Physician');
   const [regQualifications, setRegQualifications] = useState('');
@@ -261,6 +262,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
     setRegError('');
 
     if (!regName.trim()) { setRegError('Full name is required.'); return; }
+    if (!regPhone.trim()) { setRegError('Mobile number is required.'); return; }
     if (!regRegNumber.trim()) { setRegError('Medical registration number is required.'); return; }
     if (!regQualifications.trim()) { setRegError('Qualifications are required.'); return; }
 
@@ -272,6 +274,8 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
 
     setRegLoading(true);
     try {
+      const formattedPhone = regPhone.trim() ? (regPhone.trim().startsWith('+') ? regPhone.trim() : `+91 ${regPhone.trim()}`) : (user.primaryPhoneNumber?.phoneNumber || '');
+
       // Upload photo first if provided
       let photoUrl = '';
       if (photoFile) {
@@ -319,7 +323,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
         body: JSON.stringify({
           email: user.primaryEmailAddress?.emailAddress || regEmail,
           fullName: user.fullName || regName,
-          phone: user.primaryPhoneNumber?.phoneNumber || '',
+          phone: formattedPhone,
           name: regName.startsWith('Dr.') ? regName : `Dr. ${regName}`,
           registrationNumber: regRegNumber,
           specialty: regSpecialty,
@@ -653,13 +657,22 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
                         onChange={handlePhotoChange} className="hidden" />
                     </div>
 
-                    {/* Name */}
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Full Name (with Title) *</label>
-                      <input type="text" required value={regName} onChange={(e) => setRegName(e.target.value)}
-                        placeholder="Dr. Aakash Patel"
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-700 bg-slate-50/50"
-                      />
+                    {/* Name + Mobile Number */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Full Name (with Title) *</label>
+                        <input type="text" required value={regName} onChange={(e) => setRegName(e.target.value)}
+                          placeholder="Dr. Aakash Patel"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-700 bg-slate-50/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Mobile Number *</label>
+                        <input type="tel" required value={regPhone} onChange={(e) => setRegPhone(e.target.value)}
+                          placeholder="e.g. 9820145890"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-700 bg-slate-50/50"
+                        />
+                      </div>
                     </div>
 
                     {/* Registration Number + Specialty */}
