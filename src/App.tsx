@@ -21,6 +21,7 @@ import { ReceiptModal } from './components/ReceiptModal';
 // Doctor Portal
 import { DoctorAuthModal } from './components/DoctorAuthModal';
 import { DoctorPortalView } from './components/DoctorPortalView';
+import { DoctorPortalErrorBoundary } from './components/DoctorPortalErrorBoundary';
 
 // Admin Portal
 import { AdminAuthModal, AdminAuthData } from './components/AdminAuthModal';
@@ -34,7 +35,7 @@ import { fetchPatientAppointments, fetchDoctorAppointments, cancelAppointmentInD
 
 
 export default function App() {
-  // â”€â”€ Master state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Master state ----------------------------------------------------------
   const [doctors, setDoctors] = useState<Doctor[]>(INITIAL_DOCTORS);
   const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [selectedCity, setSelectedCity] = useState<string>('All Cities');
@@ -42,11 +43,11 @@ export default function App() {
   const [consultationTypeFilter, setConsultationTypeFilter] = useState<'all' | ConsultationType>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // â”€â”€ Clerk Auth Hooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Clerk Auth Hooks ------------------------------------------------------
   const { user: clerkUser, isLoaded: isClerkUserLoaded, isSignedIn: isClerkSignedIn } = useUser();
   const { signOut: clerkSignOut } = useClerk();
 
-  // â”€â”€ Patient User State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Patient User State ----------------------------------------------------
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('mediconnect_user');
     if (saved) {
@@ -60,34 +61,77 @@ export default function App() {
     };
   });
 
-  // â”€â”€ Sync Clerk User to App State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Sync Clerk User to App State ------------------------------------------
   useEffect(() => {
     if (!isClerkUserLoaded) return;
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+
     if (isClerkSignedIn && clerkUser) {
       const email = clerkUser.primaryEmailAddress?.emailAddress || '';
-      const name = clerkUser.fullName || clerkUser.firstName || email.split('@')[0] || 'Patient';
+      const name = clerkUser.fullName || clerkUser.firstName || email.split('@')[0] || 'User';
       const phone = clerkUser.primaryPhoneNumber?.phoneNumber || '';
-      setUser({
-        id: clerkUser.id,
-        name,
-        email,
-        phone,
-        isLoggedIn: true,
-      });
 
-      // Sync with MySQL backend
-      const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
-      fetch(`${API_BASE_URL}/auth/sync-profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: clerkUser.id,
-          email,
-          fullName: name,
-          role: 'patient',
-          phone,
-        }),
-      }).catch(() => {});
+      // Check authoritative role from MySQL database first
+      fetch(`${API_BASE_URL}/auth/profile/${clerkUser.id}`)
+        .then(res => res.json())
+        .then(async (body) => {
+          if (body.success && body.data) {
+            const dbRole = body.data.role;
+            if (dbRole === 'doctor') {
+              // User is registered as a doctor — restore doctor portal session
+              try {
+                const docRes = await fetch(`${API_BASE_URL}/doctors/profile/by-user/${clerkUser.id}`, {
+                  headers: { 'x-user-id': clerkUser.id, 'x-user-role': 'doctor' }
+                });
+                const docBody = await docRes.json();
+                if (docRes.ok && docBody.success && docBody.data) {
+                  setLoggedInDoctor(docBody.data as DoctorAuthData);
+                  setIsDoctorPortalOpen(true);
+                  setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
+                  return;
+                }
+              } catch (_e) {}
+            } else if (dbRole === 'patient') {
+              setUser({
+                id: clerkUser.id,
+                name,
+                email,
+                phone,
+                isLoggedIn: true,
+              });
+              return;
+            }
+          }
+
+          // Fallback / First-time user sync
+          setUser({
+            id: clerkUser.id,
+            name,
+            email,
+            phone,
+            isLoggedIn: true,
+          });
+
+          fetch(`${API_BASE_URL}/auth/sync-profile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: clerkUser.id,
+              email,
+              fullName: name,
+              phone,
+            }),
+          }).catch(() => {});
+        })
+        .catch(() => {
+          setUser({
+            id: clerkUser.id,
+            name,
+            email,
+            phone,
+            isLoggedIn: true,
+          });
+        });
     } else if (!isClerkSignedIn && user.isLoggedIn && !loggedInDoctor && !loggedInAdmin) {
       setUser({
         name: 'Guest Patient',
@@ -98,7 +142,7 @@ export default function App() {
     }
   }, [isClerkUserLoaded, isClerkSignedIn, clerkUser]);
 
-  // â”€â”€ Patient Appointments State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Patient Appointments State --------------------------------------------
   const [appointments, setAppointments] = useState<Appointment[]>(() => {
     const saved = localStorage.getItem('mediconnect_appointments');
     if (saved) {
@@ -107,20 +151,20 @@ export default function App() {
     return [];
   });
 
-  // â”€â”€ Doctor Portal State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Doctor Portal State ---------------------------------------------------
   const [isDoctorPortalOpen, setIsDoctorPortalOpen] = useState(false);
   const [isDoctorAuthModalOpen, setIsDoctorAuthModalOpen] = useState(false);
   const [loggedInDoctor, setLoggedInDoctor] = useState<DoctorAuthData | null>(null);
   const [doctorSchedule, setDoctorSchedule] = useState<DoctorScheduleConfig>(INITIAL_SCHEDULE_CONFIG);
   const [doctorAppointments, setDoctorAppointments] = useState<Appointment[]>([]);
 
-  // â”€â”€ Admin Portal State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Admin Portal State ----------------------------------------------------
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [loggedInAdmin, setLoggedInAdmin] = useState<AdminAuthData | null>(null);
 
   // Saved Doctors State
-  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>(['doc-1', 'doc-2']);
+  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>([]);
 
   const [authCallbackNotice, setAuthCallbackNotice] = useState<string | null>(null);
 
@@ -136,7 +180,7 @@ export default function App() {
     }
   }, [loggedInAdmin]);
 
-  // â”€â”€ Load doctors from API (falls back to static on failure) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Load doctors from API (falls back to static on failure) ----------
   useEffect(() => {
     setDoctorsLoading(true);
     fetchDoctors().then(data => {
@@ -146,7 +190,7 @@ export default function App() {
     });
   }, []);
 
-  // â”€â”€ Load doctor appointments from MySQL whenever loggedInDoctor changes â”€â”€
+  // -- Load doctor appointments from MySQL whenever loggedInDoctor changes --
   useEffect(() => {
     if (loggedInDoctor?.id) {
       fetchDoctorAppointments(loggedInDoctor.id).then(data => {
@@ -155,7 +199,7 @@ export default function App() {
     }
   }, [loggedInDoctor?.id]);
 
-  // â”€â”€ Sync state to localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Sync state to localStorage --------------------------------------------
   useEffect(() => {
     localStorage.setItem('mediconnect_appointments', JSON.stringify(appointments));
   }, [appointments]);
@@ -164,7 +208,7 @@ export default function App() {
     localStorage.setItem('mediconnect_user', JSON.stringify(user));
   }, [user]);
 
-  // â”€â”€ Modals & Navigation State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Modals & Navigation State ---------------------------------------------
   const [isSymptomCheckerOpen, setIsSymptomCheckerOpen] = useState(false);
   const [activeDoctorForProfile, setActiveDoctorForProfile] = useState<Doctor | null>(null);
   const [activeDoctorForBooking, setActiveDoctorForBooking] = useState<Doctor | null>(null);
@@ -185,7 +229,7 @@ export default function App() {
   const [authCustomMessage, setAuthCustomMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Helpers ---------------------------------------------------------------
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -198,7 +242,7 @@ export default function App() {
     }
   };
 
-  // â”€â”€ Patient Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Patient Handlers ------------------------------------------------------
   const handleSearchSubmit = () => scrollToSection('doctors-section');
 
   const handleSelectSpecialty = (specialtyId: string) => {
@@ -288,7 +332,7 @@ export default function App() {
       prev.map(a => a.id === id ? { ...a, status: 'cancelled' as const } : a)
     );
     cancelAppointmentInDB(id);
-    showToast('Appointment successfully cancelled. â‚¹ Refund initiated.');
+    showToast('Appointment successfully cancelled. ₹ Refund initiated.');
   };
 
   const handleRescheduleAppointment = (id: string, newDate: string, newTime: string) => {
@@ -303,7 +347,7 @@ export default function App() {
     setActiveReceiptAppointment(appt);
   };
 
-  // â”€â”€ Doctor Portal Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Doctor Portal Handlers ------------------------------------------------
   const handleOpenDoctorPortal = () => {
     if (user.isLoggedIn && !loggedInDoctor) {
       showToast('You are currently signed in as a Patient. Please sign out of your patient account to access the Doctor Portal.');
@@ -335,7 +379,7 @@ export default function App() {
     showToast('Signed out of Doctor Portal.');
   };
 
-  // â”€â”€ Admin Portal Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Admin Portal Handlers -------------------------------------------------
   const handleOpenAdminPortal = () => {
     if (user.isLoggedIn && !loggedInAdmin) {
       showToast('You are currently signed in as a Patient. Please sign out of your patient account to access the Admin Portal.');
@@ -369,7 +413,7 @@ export default function App() {
 
   const savedDoctorsList = doctors.filter(d => savedDoctorIds.includes(d.id));
 
-  // â”€â”€ Admin Portal full-page view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Admin Portal full-page view -------------------------------------------
   if (isAdminPortalOpen && loggedInAdmin) {
     return (
       <AdminPortalView
@@ -380,7 +424,7 @@ export default function App() {
     );
   }
 
-  // â”€â”€ Doctor Portal full-page view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Doctor Portal full-page view ------------------------------------------
   if (isDoctorPortalOpen && loggedInDoctor) {
     return (
       <DoctorPortalView
@@ -405,7 +449,7 @@ export default function App() {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>{authCallbackNotice}</span>
           </div>
-          <button onClick={() => setAuthCallbackNotice(null)} className="text-teal-200 hover:text-white text-xs cursor-pointer font-bold">âœ•</button>
+          <button onClick={() => setAuthCallbackNotice(null)} className="text-teal-200 hover:text-white text-xs cursor-pointer font-bold">✕</button>
         </div>
       )}
 
@@ -414,7 +458,7 @@ export default function App() {
         <div className="fixed bottom-6 right-6 z-50 bg-[#0C182B] text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-fadeIn text-xs font-bold">
           <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
           <span>{toastMessage}</span>
-          <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white ml-2 text-sm cursor-pointer">âœ•</button>
+          <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white ml-2 text-sm cursor-pointer">✕</button>
         </div>
       )}
 

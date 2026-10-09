@@ -53,6 +53,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
   onBackToPatientSite,
   onDoctorLogout
 }) => {
+  const isDemoDoctor = doctor.email?.includes('@demo.medinest.in') || doctor.id?.startsWith('doc-');
   const [activeTab, setActiveTab] = useState<'overview' | 'schedule' | 'appointments' | 'patients' | 'earnings' | 'profile'>('overview');
 
   // Modals state
@@ -133,7 +134,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
               title="Return to Public Patient Booking Website"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Patient Portal</span>
+              <span className="hidden sm:inline">{isDemoDoctor ? 'Back to Demo Doctors' : 'Patient Portal'}</span>
             </button>
 
             <div className="h-8 w-px bg-teal-800/80 hidden sm:block"></div>

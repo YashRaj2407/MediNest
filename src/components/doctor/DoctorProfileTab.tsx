@@ -32,12 +32,12 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
   const [name, setName] = useState(doctor.name);
   const [specialty, setSpecialty] = useState(doctor.specialty);
   const [qualifications, setQualifications] = useState(doctor.qualifications);
-  const [experienceYears, setExperienceYears] = useState(doctor.experienceYears.toString());
+  const [experienceYears, setExperienceYears] = useState((doctor.experienceYears ?? 0).toString());
   const [clinicName, setClinicName] = useState(doctor.clinicName);
-  const [address, setAddress] = useState(doctor.address);
+  const [address, setAddress] = useState(doctor.address || '');
   const [city, setCity] = useState(doctor.city);
-  const [feeINR, setFeeINR] = useState(doctor.feeINR > 0 ? doctor.feeINR.toString() : "");
-  const [languages, setLanguages] = useState(doctor.languages.join(', '));
+  const [feeINR, setFeeINR] = useState(doctor.feeINR && doctor.feeINR > 0 ? doctor.feeINR.toString() : '');
+  const [languages, setLanguages] = useState(Array.isArray(doctor.languages) ? doctor.languages.join(', ') : (doctor.languages || 'English'));
   const [acceptingAppointments, setAcceptingAppointments] = useState(doctor.acceptingNewAppointments);
   const [videoConsultationEnabled, setVideoConsultationEnabled] = useState(
     doctor.consultationModes.includes('video')
@@ -45,7 +45,7 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
   const [clinicConsultationEnabled, setClinicConsultationEnabled] = useState(
     doctor.consultationModes.includes('clinic')
   );
-  const [photoUrl, setPhotoUrl] = useState(doctor.photo);
+  const [photoUrl, setPhotoUrl] = useState(doctor.photo || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -134,7 +134,7 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://loca
             </div>
             <h3 className="text-xl font-bold text-[#032F31]">{doctor.name}</h3>
             <p className="text-xs text-slate-500 font-medium">
-              {doctor.qualifications} â€¢ {doctor.specialty}
+              {doctor.qualifications} • {doctor.specialty}
             </p>
             <div className="text-[11px] text-slate-400">
               Registration No: <span className="font-mono text-slate-700 font-semibold">{doctor.registrationNumber}</span>
@@ -283,10 +283,10 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://loca
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-              Consultation Fee in â‚¹ INR *
+              Consultation Fee in ₹ INR *
             </label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-slate-500">â‚¹</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-slate-500">₹</span>
               <input
                 type="number"
                 min="99"
