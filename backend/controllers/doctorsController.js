@@ -218,7 +218,7 @@ export async function doctorLogin(req, res) {
 export async function getDoctorProfileByUserId(req, res) {
   try {
     const { userId } = req.params;
-    const [rows] = await pool.query(
+    let [rows] = await pool.query(
       `SELECT dp.*, p.email, p.phone, p.full_name, p.avatar_url
        FROM doctor_profiles dp
        JOIN profiles p ON dp.user_id = p.id
@@ -226,6 +226,27 @@ export async function getDoctorProfileByUserId(req, res) {
        LIMIT 1`,
       [userId]
     );
+
+    if (rows.length === 0) {
+      // Check if profiles row has an email matching any doctor_profiles record
+      const [userRows] = await pool.query('SELECT email FROM profiles WHERE id = ?', [userId]);
+      if (userRows.length > 0 && userRows[0].email) {
+        const userEmail = userRows[0].email.trim().toLowerCase();
+        [rows] = await pool.query(
+          `SELECT dp.*, p.email, p.phone, p.full_name, p.avatar_url
+           FROM doctor_profiles dp
+           LEFT JOIN profiles p ON dp.user_id = p.id
+           WHERE LOWER(p.email) = ? OR LOWER(dp.name) LIKE ?
+           LIMIT 1`,
+          [userEmail, `%${userEmail.split('@')[0]}%`]
+        );
+        if (rows.length > 0) {
+          await pool.query(`UPDATE profiles SET role = 'doctor' WHERE id = ?`, [userId]);
+          await pool.query(`UPDATE doctor_profiles SET user_id = ? WHERE id = ?`, [userId, rows[0].id]);
+          rows[0].user_id = userId;
+        }
+      }
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Doctor profile not found for this user.' });
