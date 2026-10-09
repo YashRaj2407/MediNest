@@ -30,7 +30,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   // Clerk hooks
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
-  const { isSignedIn, isLoaded: authLoaded } = useAuth();
+  const { isSignedIn, isLoaded: authLoaded, getToken } = useAuth();
   const { user } = useUser();
 
   // Tabs
@@ -132,13 +132,17 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
 
         // Get Clerk token and look up doctor profile
         try {
-          const token = await (window as any).__clerk?.session?.getToken?.() || '';
+          let token = '';
+          try {
+            if (getToken) token = (await getToken()) || '';
+          } catch (_tErr) {}
+
           const res = await fetch(`${API_BASE_URL}/doctors/login`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-              'x-user-id': (result as any).createdUserId || '',
+              'x-user-id': (result as any).createdUserId || user?.id || '',
               'x-user-role': 'doctor',
             },
             body: JSON.stringify({ email: loginEmail.trim() }),
@@ -149,10 +153,11 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
             onDoctorLoginSuccess(body.data as DoctorAuthData);
             onClose();
           } else {
-            setLoginError(body?.error || 'No doctor profile found for this account. Please register first.');
+            setLoginError(body?.error || 'No doctor profile found for this account. Please register as a doctor first.');
             setLoginStep('form');
           }
-        } catch (_) {
+        } catch (err: any) {
+          console.error('[Doctor Auth Error]:', err);
           setLoginError('Signed in to Clerk, but could not reach the doctor profile API. Ensure the backend is running.');
           setLoginStep('form');
         }
