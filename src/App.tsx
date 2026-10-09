@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useUser, useClerk } from '@clerk/clerk-react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -51,7 +51,13 @@ export default function App() {
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('mediconnect_user');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed?.email && (parsed.email.toLowerCase().includes('yashdhawale') || parsed.email.toLowerCase().includes('medinest.in'))) {
+          return { name: 'Guest Patient', phone: '', email: '', isLoggedIn: false };
+        }
+        return parsed;
+      } catch (e) { /* ignore */ }
     }
     return {
       name: 'Guest Patient',
@@ -388,8 +394,13 @@ export default function App() {
   };
 
   const handleDoctorLogout = async () => {
+    try {
+      await clerkSignOut();
+    } catch (_) {}
     setLoggedInDoctor(null);
     setIsDoctorPortalOpen(false);
+    localStorage.removeItem('mediconnect_user');
+    setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
     showToast('Signed out of Doctor Portal.');
   };
 
