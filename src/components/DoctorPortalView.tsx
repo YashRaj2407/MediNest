@@ -349,7 +349,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
               <div className="p-6 rounded-3xl bg-[#FAF7EE] border-2 border-[#032F31] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="flex items-start sm:items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl bg-[#032F31] text-[#FAE58D] flex items-center justify-center font-bold text-xl shrink-0 shadow-md">
-                    {nextUpAppointment.patientName.charAt(0)}
+                    {(nextUpAppointment.patientName || 'P').charAt(0)}
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">

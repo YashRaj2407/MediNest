@@ -261,7 +261,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-[#032F31] text-[#FAE58D] flex items-center justify-center font-bold text-sm shrink-0">
-                      {appt.patientName.charAt(0)}
+                      {(appt.patientName || 'P').charAt(0)}
                     </div>
                     <div>
                       <div className="flex items-center gap-2">

@@ -88,7 +88,7 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-teal-500 to-blue-600 flex items-center justify-center text-white font-bold text-xl shadow-md">
-                {user.name.charAt(0)}
+                {(user.name || 'P').charAt(0)}
               </div>
               <div>
                 <div className="flex items-center gap-2">
