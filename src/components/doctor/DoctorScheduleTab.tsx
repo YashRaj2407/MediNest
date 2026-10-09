@@ -191,7 +191,7 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
     }
 
     const bookedAppt = appointments.find(
-      a => (a.date.toLowerCase().includes(selectedDayTab.toLowerCase())) && a.timeSlot.includes(timeSlot) && a.status !== 'cancelled'
+      a => (((a.date) || '').toLowerCase().includes(((selectedDayTab) || '').toLowerCase())) && a.timeSlot.includes(timeSlot) && a.status !== 'cancelled'
     );
     if (bookedAppt) {
       if (bookedAppt.status === 'completed') {

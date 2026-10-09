@@ -67,12 +67,12 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
     // 1. Tab check
     if (activeTab === 'today') {
       if (appt.status === 'cancelled') return false;
-      const isToday = appt.date.toLowerCase().includes('today') || appt.date.toLowerCase().includes('sep 11');
+      const isToday = (appt.date || '').toLowerCase().includes('today') || (appt.date || '').toLowerCase().includes('sep 11');
       if (!isToday && appt.status !== 'upcoming') return false;
       if (!isToday) return false;
     } else if (activeTab === 'upcoming') {
       if (appt.status !== 'upcoming') return false;
-      const isToday = appt.date.toLowerCase().includes('today') || appt.date.toLowerCase().includes('sep 11');
+      const isToday = (appt.date || '').toLowerCase().includes('today') || (appt.date || '').toLowerCase().includes('sep 11');
       if (isToday) return false;
     } else if (activeTab === 'completed') {
       if (appt.status !== 'completed') return false;
@@ -85,12 +85,12 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
 
     // 3. Search check
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+      const q = (searchQuery || '').toLowerCase();
       return (
-        appt.patientName.toLowerCase().includes(q) ||
-        appt.id.toLowerCase().includes(q) ||
-        appt.patientPhone.toLowerCase().includes(q) ||
-        appt.visitReason.toLowerCase().includes(q)
+        (appt.patientName || '').toLowerCase().includes(q) ||
+        (appt.id || '').toLowerCase().includes(q) ||
+        (appt.patientPhone || '').toLowerCase().includes(q) ||
+        (appt.visitReason || '').toLowerCase().includes(q)
       );
     }
 
@@ -152,7 +152,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Today ({appointments.filter(a => (a.date.toLowerCase().includes('today') || a.date.toLowerCase().includes('sep 11')) && a.status !== 'cancelled').length})
+              Today ({appointments.filter(a => ((a.date || '').toLowerCase().includes('today') || (a.date || '').toLowerCase().includes('sep 11')) && a.status !== 'cancelled').length})
             </button>
             <button
               type="button"
@@ -163,7 +163,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Upcoming ({appointments.filter(a => a.status === 'upcoming' && !a.date.toLowerCase().includes('today') && !a.date.toLowerCase().includes('sep 11')).length})
+              Upcoming ({appointments.filter(a => a.status === 'upcoming' && !(a.date || '').toLowerCase().includes('today') && !(a.date || '').toLowerCase().includes('sep 11')).length})
             </button>
             <button
               type="button"

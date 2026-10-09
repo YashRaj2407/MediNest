@@ -62,10 +62,10 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
 
   // Filter calculations
   const todayAppts = appointments.filter(
-    a => (a.date.toLowerCase().includes('today') || a.date.toLowerCase().includes('sep 11')) && a.status !== 'cancelled'
+    a => ((a.date || '').toLowerCase().includes('today') || (a.date || '').toLowerCase().includes('sep 11')) && a.status !== 'cancelled'
   );
   const upcomingAppts = appointments.filter(
-    a => a.status === 'upcoming' && !a.date.toLowerCase().includes('today') && !a.date.toLowerCase().includes('sep 11')
+    a => a.status === 'upcoming' && !(a.date || '').toLowerCase().includes('today') && !(a.date || '').toLowerCase().includes('sep 11')
   );
   const completedAppts = appointments.filter(a => a.status === 'completed');
 

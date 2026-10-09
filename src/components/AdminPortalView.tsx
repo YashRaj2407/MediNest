@@ -433,7 +433,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {patients
-                      .filter(p => p.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || p.email.toLowerCase().includes(searchQuery.toLowerCase()))
+                      .filter(p => ((p.full_name) || '').toLowerCase().includes(((searchQuery) || '').toLowerCase()) || ((p.email) || '').toLowerCase().includes(((searchQuery) || '').toLowerCase()))
                       .map((p) => (
                         <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="p-4 font-bold text-slate-900">{p.full_name}</td>

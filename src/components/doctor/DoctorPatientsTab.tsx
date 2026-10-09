@@ -65,12 +65,12 @@ export const DoctorPatientsTab: React.FC<DoctorPatientsTabProps> = ({
 
   const patientsList = Array.from(patientsMap.values()).filter(p => {
     if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
+    const q = (searchQuery || '').toLowerCase();
     return (
-      p.name.toLowerCase().includes(q) ||
-      p.phone.toLowerCase().includes(q) ||
-      p.email.toLowerCase().includes(q) ||
-      p.latestSymptoms.toLowerCase().includes(q)
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.phone || '').toLowerCase().includes(q) ||
+      (p.email || '').toLowerCase().includes(q) ||
+      (p.latestSymptoms || '').toLowerCase().includes(q)
     );
   });
 

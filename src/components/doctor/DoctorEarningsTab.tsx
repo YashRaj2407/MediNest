@@ -23,7 +23,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({ appointmen
   }, [doctorId, appointments]);
 
   const todayCompleted = appointments.filter(
-    a => a.status === 'completed' && (a.date.toLowerCase().includes('today') || a.date.includes(new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})))
+    a => a.status === 'completed' && ((a.date || '').toLowerCase().includes('today') || (a.date || '').includes(new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})))
   );
   
   const todayEarnings = todayCompleted.length * doctorFeeINR;

@@ -40,8 +40,8 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
   // Find matching doctors for the suggested specialty (all matching, no slice)
   const matchingDoctors = React.useMemo(() => {
     if (!analysisResult) return [];
-    const targetSpecId = analysisResult.specialtyId.toLowerCase().replace(/[^a-z]/g, '');
-    const targetSpecName = analysisResult.primarySpecialty.toLowerCase();
+    const targetSpecId = ((analysisResult.specialtyId) || '').toLowerCase().replace(/[^a-z]/g, '');
+    const targetSpecName = ((analysisResult.primarySpecialty) || '').toLowerCase();
 
     return doctors.filter(d => {
       const dSpecId = (d.specialtyId || '').toLowerCase().replace(/[^a-z]/g, '');
