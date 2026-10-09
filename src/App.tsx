@@ -77,7 +77,7 @@ export default function App() {
         .then(async (body) => {
           if (body.success && body.data) {
             const dbRole = body.data.role;
-            if (dbRole === 'doctor') {
+            if (dbRole === 'doctor' && !loggedInDoctor) {
               // User is registered as a doctor — restore doctor portal session
               try {
                 const docRes = await fetch(`${API_BASE_URL}/doctors/profile/by-user/${clerkUser.id}`, {
@@ -85,12 +85,26 @@ export default function App() {
                 });
                 const docBody = await docRes.json();
                 if (docRes.ok && docBody.success && docBody.data) {
-                  setLoggedInDoctor(docBody.data as DoctorAuthData);
+                  const docData = {
+                    ...docBody.data,
+                    isLoggedIn: true,
+                    acceptingNewAppointments: docBody.data.acceptingNewAppointments ?? true,
+                    consultationModes: Array.isArray(docBody.data.consultationModes)
+                      ? docBody.data.consultationModes
+                      : ['video', 'clinic'],
+                    languages: Array.isArray(docBody.data.languages)
+                      ? docBody.data.languages
+                      : ['English'],
+                  };
+                  setLoggedInDoctor(docData as DoctorAuthData);
                   setIsDoctorPortalOpen(true);
                   setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
                   return;
                 }
               } catch (_e) {}
+              // If doctor profile fetch fails, still set as patient UI so the page is not blank
+              setUser({ id: clerkUser.id, name, email, phone, isLoggedIn: true });
+              return;
             } else if (dbRole === 'patient') {
               setUser({
                 id: clerkUser.id,
@@ -427,16 +441,21 @@ export default function App() {
   // -- Doctor Portal full-page view ------------------------------------------
   if (isDoctorPortalOpen && loggedInDoctor) {
     return (
-      <DoctorPortalView
-        doctor={loggedInDoctor}
-        schedule={doctorSchedule}
-        appointments={doctorAppointments}
-        onUpdateDoctor={setLoggedInDoctor}
-        onUpdateSchedule={setDoctorSchedule}
-        onUpdateAppointments={setDoctorAppointments}
-        onBackToPatientSite={() => setIsDoctorPortalOpen(false)}
-        onDoctorLogout={handleDoctorLogout}
-      />
+      <DoctorPortalErrorBoundary onReset={() => {
+        setLoggedInDoctor(null);
+        setIsDoctorPortalOpen(false);
+      }}>
+        <DoctorPortalView
+          doctor={loggedInDoctor}
+          schedule={doctorSchedule}
+          appointments={doctorAppointments}
+          onUpdateDoctor={setLoggedInDoctor}
+          onUpdateSchedule={setDoctorSchedule}
+          onUpdateAppointments={setDoctorAppointments}
+          onBackToPatientSite={() => setIsDoctorPortalOpen(false)}
+          onDoctorLogout={handleDoctorLogout}
+        />
+      </DoctorPortalErrorBoundary>
     );
   }
 
@@ -546,12 +565,14 @@ export default function App() {
 
       {/* 2. Doctor Detailed Profile Modal */}
       {!!activeDoctorForProfile && (
-        <DoctorProfileModal
-          doctor={activeDoctorForProfile}
-          isOpen={!!activeDoctorForProfile}
-          onClose={() => setActiveDoctorForProfile(null)}
-          onProceedToBooking={handleProceedToBookingFromProfile}
-        />
+        <DoctorPortalErrorBoundary onReset={() => setActiveDoctorForProfile(null)}>
+          <DoctorProfileModal
+            doctor={activeDoctorForProfile}
+            isOpen={!!activeDoctorForProfile}
+            onClose={() => setActiveDoctorForProfile(null)}
+            onProceedToBooking={handleProceedToBookingFromProfile}
+          />
+        </DoctorPortalErrorBoundary>
       )}
 
       {/* 3. Booking and Indian Payment Modal */}

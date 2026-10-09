@@ -205,7 +205,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                 <span>•</span>
                 <span className="flex items-center gap-1">
                   <Languages className="w-3.5 h-3.5 text-teal-400" />
-                  {doctor.languages.join(', ')}
+                  {(Array.isArray(doctor.languages) ? doctor.languages : []).join(', ')}
                 </span>
               </div>
             </div>
@@ -249,7 +249,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
           >
             Verified Patient Reviews
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px]">
-              {doctor.reviews.length}
+              {(Array.isArray(doctor.reviews) ? doctor.reviews.length : 0)}
             </span>
           </button>
           <button
@@ -287,7 +287,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                       Services & Transparent Fees (INR)
                     </h3>
                     <div className="space-y-2">
-                      {doctor.services.map((srv, idx) => (
+                      {(Array.isArray(doctor.services) ? doctor.services : []).map((srv, idx) => (
                         <div
                           key={idx}
                           className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs"
@@ -325,7 +325,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                     </div>
                   </div>
 
-                  {doctor.reviews.map((rev) => (
+                  {(Array.isArray(doctor.reviews) ? doctor.reviews : []).map((rev) => (
                     <div key={rev.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-2">
                       <div className="flex items-center justify-between">
                         <div>

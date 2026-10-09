@@ -20,7 +20,8 @@ export const DoctorAvatar: React.FC<DoctorAvatarProps> = ({
   const hasValidPhoto = Boolean(photo && photo.trim() !== '' && !imgError);
 
   // Compute a simple hash from doctor name to vary fallback theme accents
-  const nameHash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const safeName = name || 'Doctor';
+  const nameHash = safeName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
   const themeVariants: ('light' | 'dark' | 'card' | 'gold')[] = ['light', 'dark', 'card', 'gold'];
   const fallbackTheme = themeVariants[nameHash % themeVariants.length];
 
