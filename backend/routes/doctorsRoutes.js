@@ -1,3 +1,4 @@
+import { requireAuth } from '../middleware/auth.js';
 ﻿import express from 'express';
 import { 
   getDoctors, 
@@ -15,8 +16,8 @@ const router = express.Router();
 
 router.get('/featured', getFeaturedDoctors);
 router.get('/', getDoctors);
-router.post('/login', doctorLogin);
-router.post('/register', registerDoctor);
+router.post('/login', requireAuth, doctorLogin);
+router.post('/register', requireAuth, registerDoctor);
 router.get('/profile/by-user/:userId', getDoctorProfileByUserId);
 router.get('/:id/stats', getDoctorStats);
 router.patch('/:id/photo', uploadDoctorPhoto);

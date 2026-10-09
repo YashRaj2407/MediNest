@@ -29,7 +29,7 @@ import { AdminPortalView } from './components/AdminPortalView';
 import { INITIAL_DOCTORS } from './data/doctorsData';
 import { INITIAL_SCHEDULE_CONFIG, INITIAL_DOCTOR_APPOINTMENTS } from './data/doctorPortalData';
 import { Doctor, ConsultationType, Appointment, UserProfile, DoctorAuthData, DoctorScheduleConfig } from './types';
-import { fetchDoctors } from './lib/doctors';
+import { fetchDoctors, fetchFeaturedDoctors } from './lib/doctors';
 import { fetchPatientAppointments, fetchDoctorAppointments, cancelAppointmentInDB, rescheduleAppointmentInDB } from './lib/appointments';
 
 

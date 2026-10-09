@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Search, 
   Filter, 
@@ -16,6 +16,7 @@ import {
 import { Doctor, ConsultationType } from '../types';
 import { SPECIALTIES, INDIAN_CITIES } from '../data/specialtiesData';
 import { DoctorAvatar } from './DoctorAvatar';
+import { fetchDoctors } from '../lib/doctors';
 
 interface DoctorListProps {
   doctors: Doctor[];
@@ -56,31 +57,46 @@ export const DoctorList: React.FC<DoctorListProps> = ({
     return Array.from(set);
   }, [doctors]);
 
-  // Filtering Logic
+  // Whether any active search/filter is applied
+  const isSearchActive = searchQuery.trim() !== '' || selectedSpecialty !== 'all' || selectedCity !== 'All Cities' || consultationTypeFilter !== 'all' || selectedLanguage !== 'all' || selectedGender !== 'all' || selectedExperience > 0 || availableTodayOnly || maxFeeINR < 2000;
+
+  // For API-backed search results
+  const [searchResults, setSearchResults] = useState<import('../types').Doctor[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  const runSearch = useCallback(async () => {
+    if (!isSearchActive) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const results = await fetchDoctors({
+        search: searchQuery.trim() || undefined,
+        specialty: selectedSpecialty !== 'all' ? selectedSpecialty : undefined,
+        city: selectedCity !== 'All Cities' ? selectedCity : undefined,
+        consultationType: consultationTypeFilter !== 'all' ? consultationTypeFilter : undefined,
+      });
+      setSearchResults(results);
+    } catch (_) {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [isSearchActive, searchQuery, selectedSpecialty, selectedCity, consultationTypeFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(runSearch, 350);
+    return () => clearTimeout(timer);
+  }, [runSearch]);
+
+  // When search is inactive: show featured doctors (passed-in props).
+  // When search is active: use API results, then apply client-side filters that API doesn't handle.
   const filteredDoctors = useMemo(() => {
-    const isDefaultState = selectedSpecialty === "all" && selectedCity === "All Cities" && consultationTypeFilter === "all" && selectedLanguage === "all" && selectedGender === "all" && selectedExperience === 0 && !availableTodayOnly && maxFeeINR === 2000 && !searchQuery.trim();
-    
-    return doctors.filter(doc => {
-      if (isDefaultState) {
-        return doc.isFeatured;
-      }
-      if (selectedSpecialty !== "all" && doc.specialtyId !== selectedSpecialty) return false;
-      if (selectedCity !== "All Cities" && doc.city !== selectedCity) return false;
-      if (consultationTypeFilter !== "all" && !doc.consultationModes.includes(consultationTypeFilter)) return false;
-      if (selectedLanguage !== "all" && !doc.languages.includes(selectedLanguage)) return false;
-      if (selectedGender !== "all" && doc.gender !== selectedGender) return false;
+    const base = isSearchActive ? searchResults : doctors.filter(d => d.isFeatured !== false);
+    return base.filter(doc => {
+      if (selectedLanguage !== 'all' && !doc.languages.includes(selectedLanguage)) return false;
+      if (selectedGender !== 'all' && doc.gender !== selectedGender) return false;
       if (doc.experienceYears < selectedExperience) return false;
       if (availableTodayOnly && !doc.availableToday) return false;
       if (doc.feeINR > maxFeeINR) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchName = doc.name.toLowerCase().includes(q);
-        const matchSpecialty = doc.specialty.toLowerCase().includes(q);
-        const matchHospital = doc.clinicName.toLowerCase().includes(q);
-        const matchCity = doc.city.toLowerCase().includes(q);
-        const matchAbout = doc.about.toLowerCase().includes(q);
-        if (!matchName && !matchSpecialty && !matchHospital && !matchCity && !matchAbout) return false;
-      }
       return true;
     }).sort((a, b) => {
       if (sortBy === 'rating') return b.rating - a.rating;
@@ -356,7 +372,9 @@ export const DoctorList: React.FC<DoctorListProps> = ({
 
           {/* Doctor Cards List */}
           <div className="lg:col-span-8 xl:col-span-9 space-y-4">
-            {filteredDoctors.length > 0 ? (
+            {searchLoading ? (
+              <div className="p-12 text-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-700 mx-auto mb-3"></div><p className="text-sm text-slate-500">Searching doctors...</p></div>
+            ) : filteredDoctors.length > 0 ? (
               filteredDoctors.map((doctor: Doctor) => {
                 return (
                   <div
@@ -458,7 +476,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                 );
               })
             ) : (
-              /* Empty State */
+              /* Empty State - contextual message */
               <div className="p-12 text-center bg-[#F4EFE2] rounded-[28px] border border-dashed border-[#D5CDBC] space-y-4">
                 <div className="w-16 h-16 rounded-full bg-[#FAF7EE] border border-[#D5CDBC] flex items-center justify-center mx-auto text-[#032F31]">
                   <Search className="w-7 h-7" />
