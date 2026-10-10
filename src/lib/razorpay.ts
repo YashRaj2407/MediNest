@@ -223,15 +223,28 @@ export function buildAppointmentPayload(
 }
 
 export function resolveDate(dateStr: string): Date {
+  const currentYear = new Date().getFullYear() || 2026;
   const now = new Date();
+  if (!dateStr) return now;
+
   if (dateStr.startsWith('Today')) return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   if (dateStr.startsWith('Tomorrow')) {
     const d = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
     d.setDate(d.getDate() + 1);
     return d;
   }
-  const parsed = new Date(dateStr);
-  return isNaN(parsed.getTime()) ? now : parsed;
+
+  let cleanDateStr = dateStr.trim();
+  if (!/\b(202[4-9]|203[0-9])\b/.test(cleanDateStr)) {
+    cleanDateStr = `${cleanDateStr}, ${currentYear}`;
+  }
+
+  const parsed = new Date(cleanDateStr);
+  if (isNaN(parsed.getTime())) return now;
+  if (parsed.getFullYear() < 2025) {
+    parsed.setFullYear(currentYear);
+  }
+  return parsed;
 }
 
 export function parseTimeStr(timeStr: string): { h: number; m: number } {

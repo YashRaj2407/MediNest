@@ -1,72 +1,101 @@
 /**
  * backend/services/sseService.js
- * Lightweight Server-Sent Events (SSE) hub for real-time schedule updates.
+ * Lightweight Server-Sent Events (SSE) hub for real-time schedule and appointment updates.
+ * Supports real-time event streaming to both clinicians and patients.
  */
 
-// Map of doctorId -> Set of client response objects
-const clientsByDoctor = new Map();
+// Map of entityId (doctorId or patientId) -> Set of client response objects
+const clientsByEntity = new Map();
 
 /**
- * Register an active SSE client connection for a specific doctor.
+ * Register an active SSE client connection for a specific doctor or patient.
  */
-export function addClient(doctorId, res) {
-  if (!doctorId || !res) return;
+export function addClient(entityId, res) {
+  if (!entityId || !res) return;
 
-  if (!clientsByDoctor.has(doctorId)) {
-    clientsByDoctor.set(doctorId, new Set());
+  if (!clientsByEntity.has(entityId)) {
+    clientsByEntity.set(entityId, new Set());
   }
-  clientsByDoctor.get(doctorId).add(res);
+  clientsByEntity.get(entityId).add(res);
 
-  console.log(`[SSE] Client connected for doctor=${doctorId}. Total connections: ${clientsByDoctor.get(doctorId).size}`);
+  console.log(`[SSE] Client connected for entity=${entityId}. Total connections: ${clientsByEntity.get(entityId).size}`);
 
   // Send initial connection confirmation event
-  res.write(`event: connected\ndata: ${JSON.stringify({ doctorId, timestamp: new Date().toISOString() })}\n\n`);
+  res.write(`event: connected\ndata: ${JSON.stringify({ entityId, timestamp: new Date().toISOString() })}\n\n`);
 
   // Handle client disconnect
   res.on('close', () => {
-    removeClient(doctorId, res);
+    removeClient(entityId, res);
   });
 }
 
 /**
  * Remove an SSE client connection.
  */
-export function removeClient(doctorId, res) {
-  if (!doctorId || !clientsByDoctor.has(doctorId)) return;
-  const set = clientsByDoctor.get(doctorId);
+export function removeClient(entityId, res) {
+  if (!entityId || !clientsByEntity.has(entityId)) return;
+  const set = clientsByEntity.get(entityId);
   set.delete(res);
   if (set.size === 0) {
-    clientsByDoctor.delete(doctorId);
+    clientsByEntity.delete(entityId);
   }
-  console.log(`[SSE] Client disconnected for doctor=${doctorId}. Remaining: ${set.size}`);
+  console.log(`[SSE] Client disconnected for entity=${entityId}. Remaining: ${set.size}`);
+}
+
+/**
+ * Helper to broadcast an event to all connected clients for a given entity ID.
+ */
+function broadcastToEntity(entityId, eventName, data) {
+  if (!entityId || !clientsByEntity.has(entityId)) return;
+  const clients = clientsByEntity.get(entityId);
+  const dataString = JSON.stringify(data);
+
+  console.log(`[SSE] Broadcasting ${eventName} to ${clients.size} clients for entity=${entityId}`);
+
+  for (const clientRes of Array.from(clients)) {
+    try {
+      clientRes.write(`event: ${eventName}\ndata: ${dataString}\n\n`);
+    } catch (err) {
+      console.error(`[SSE Broadcast Error for ${entityId}]:`, err.message);
+      clients.delete(clientRes);
+    }
+  }
 }
 
 /**
  * Broadcast a schedule change event to all clients viewing a doctor's schedule.
- * Payload includes doctorId, action, and optional date/block info (no sensitive patient data).
  */
 export function broadcastScheduleUpdate(doctorId, payload = {}) {
-  if (!doctorId || !clientsByDoctor.has(doctorId)) {
-    console.log(`[SSE] No active clients connected for doctor=${doctorId}.`);
-    return;
-  }
-
-  const clients = clientsByDoctor.get(doctorId);
-  const dataString = JSON.stringify({
+  const data = {
     doctorId,
     action: payload.action || 'schedule_updated',
     date: payload.date || null,
+    appointmentId: payload.appointmentId || null,
     timestamp: new Date().toISOString(),
-  });
+  };
 
-  console.log(`[SSE] Broadcasting schedule_update to ${clients.size} clients for doctor=${doctorId}: ${payload.action}`);
+  broadcastToEntity(doctorId, 'schedule_update', data);
+}
 
-  for (const clientRes of clients) {
-    try {
-      clientRes.write(`event: schedule_update\ndata: ${dataString}\n\n`);
-    } catch (err) {
-      console.error('[SSE Broadcast Error]:', err.message);
-      clients.delete(clientRes);
-    }
+/**
+ * Broadcast an appointment status update to both the assigned doctor AND the patient.
+ */
+export function broadcastAppointmentUpdate({ doctorId, patientId, appointmentId, action = 'appointment_completed', status = 'completed' }) {
+  const payload = {
+    doctorId,
+    patientId,
+    appointmentId,
+    action,
+    status,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (doctorId) {
+    broadcastToEntity(doctorId, 'appointment_update', payload);
+    broadcastToEntity(doctorId, 'schedule_update', payload);
+  }
+
+  if (patientId) {
+    broadcastToEntity(patientId, 'appointment_update', payload);
   }
 }

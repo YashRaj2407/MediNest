@@ -1,4 +1,4 @@
-﻿import pool from '../config/db.js';
+import pool from '../config/db.js';
 import { v4 as uuidv4 } from 'uuid';
 
 /** Helper: maps a DB row (doctor_profiles JOIN profiles) → frontend Doctor/DoctorAuthData shape */
@@ -44,8 +44,9 @@ export async function getDoctors(req, res) {
       SELECT dp.*, p.email, p.full_name, p.avatar_url
       FROM doctor_profiles dp
       JOIN profiles p ON dp.user_id = p.id
-      WHERE dp.verification_status = 'verified'
+      WHERE dp.verification_status IN ('verified', 'approved')
         AND dp.accepting_appointments = TRUE
+        AND p.account_status = 'active'
     `;
     const params = [];
 
@@ -77,6 +78,7 @@ export async function getDoctors(req, res) {
     return res.status(500).json({ success: false, error: error.message });
   }
 }
+
 
 /**
  * GET /api/v1/doctors/featured
@@ -218,7 +220,7 @@ export async function doctorLogin(req, res) {
 export async function getDoctorProfileByUserId(req, res) {
   try {
     const { userId } = req.params;
-    let [rows] = await pool.query(
+    const [rows] = await pool.query(
       `SELECT dp.*, p.email, p.phone, p.full_name, p.avatar_url
        FROM doctor_profiles dp
        JOIN profiles p ON dp.user_id = p.id
@@ -226,27 +228,6 @@ export async function getDoctorProfileByUserId(req, res) {
        LIMIT 1`,
       [userId]
     );
-
-    if (rows.length === 0) {
-      // Check if profiles row has an email matching any doctor_profiles record
-      const [userRows] = await pool.query('SELECT email FROM profiles WHERE id = ?', [userId]);
-      if (userRows.length > 0 && userRows[0].email) {
-        const userEmail = userRows[0].email.trim().toLowerCase();
-        [rows] = await pool.query(
-          `SELECT dp.*, p.email, p.phone, p.full_name, p.avatar_url
-           FROM doctor_profiles dp
-           LEFT JOIN profiles p ON dp.user_id = p.id
-           WHERE LOWER(p.email) = ? OR LOWER(dp.name) LIKE ?
-           LIMIT 1`,
-          [userEmail, `%${userEmail.split('@')[0]}%`]
-        );
-        if (rows.length > 0) {
-          await pool.query(`UPDATE profiles SET role = 'doctor' WHERE id = ?`, [userId]);
-          await pool.query(`UPDATE doctor_profiles SET user_id = ? WHERE id = ?`, [userId, rows[0].id]);
-          rows[0].user_id = userId;
-        }
-      }
-    }
 
     if (rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Doctor profile not found for this user.' });
@@ -312,8 +293,9 @@ export async function registerDoctor(req, res) {
       `INSERT INTO doctor_profiles (
         id, user_id, registration_number, name, specialty, specialty_id, 
         qualifications, experience_years, clinic_name, clinic_address, city,
-        fee_inr, rating, review_count, photo, about, is_featured, consultation_types, languages
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, 0, ?, ?, FALSE, ?, ?)`,
+        fee_inr, rating, review_count, photo, about, is_featured, consultation_types, languages,
+        verification_status, accepting_appointments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, 0, ?, ?, FALSE, ?, ?, 'pending', 0)`,
       [
         docId, userId, registrationNumber, name, specialty, specialtyId,
         qualifications, experienceYears || 0, clinicName || '', city || '',

@@ -137,24 +137,34 @@ export async function getSlots(req, res) {
       const slotStart = new Date(slot.startISO);
       const slotEnd = new Date(slot.endISO);
 
-      // Expired in past
-      if (slotStart < nowIST) {
-        slot.status = 'expired';
-        continue;
-      }
-
-      // Check blocks (breaks, leaves, blocked slots)
+      // Check blocks FIRST (breaks, leaves, blocked slots) — these take priority over expired
+      // so patients can see WHY a slot is unavailable even if time has passed
+      let matchedBlock = null;
       for (const block of blocks) {
         const blockStart = new Date(block.start_datetime);
         const blockEnd = new Date(block.end_datetime);
         // Overlap: slotStart < blockEnd && slotEnd > blockStart
         if (slotStart < blockEnd && slotEnd > blockStart) {
-          slot.status = block.type === 'break' ? 'break' : 'blocked';
-          slot.label = block.type === 'break' ? (block.reason || 'Doctor on Break') : (block.reason || 'Unavailable');
-          break;
+          if (block.type === 'break') {
+            matchedBlock = block;
+            break; // Break has highest priority, stop search
+          } else if (!matchedBlock) {
+            matchedBlock = block;
+          }
         }
       }
-      if (slot.status !== 'available') continue;
+
+      if (matchedBlock) {
+        slot.status = matchedBlock.type === 'break' ? 'break' : 'blocked';
+        slot.label = matchedBlock.type === 'break' ? (matchedBlock.reason || 'Doctor on Break') : (matchedBlock.reason || 'Unavailable');
+        continue;
+      }
+
+      // Mark as expired only if no block covers this slot
+      if (slotStart < nowIST) {
+        slot.status = 'expired';
+        continue;
+      }
 
       // Check payment holds
       for (const hold of activeHolds) {

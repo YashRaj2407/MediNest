@@ -15,8 +15,10 @@ export interface AdminAuthData {
   name: string;
   email: string;
   role: 'admin';
+  token?: string;
   isLoggedIn: boolean;
 }
+
 
 interface AdminAuthModalProps {
   isOpen: boolean;
@@ -56,21 +58,39 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
 
     setLoginLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+      const res = await fetch(`${API_BASE_URL}/auth/admin-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: adminEmail.trim(), password })
+      });
+
+      const body = await res.json();
+      if (!res.ok || !body.success) {
+        setLoginError(body?.error || 'Administrator verification failed. Unauthorized account.');
+        return;
+      }
+
+      if (body.token) {
+        localStorage.setItem('medinest_admin_token', body.token);
+      }
+
       onAdminLoginSuccess({
-        id: 'admin-1',
-        name: 'MediNest Admin',
-        email: adminEmail.trim(),
+        id: body.admin?.id || 'admin_medinest',
+        name: body.admin?.name || 'MediNest Platform Administrator',
+        email: body.admin?.email || adminEmail.trim(),
         role: 'admin',
+        token: body.token,
         isLoggedIn: true
       });
       onClose();
     } catch (err: any) {
-      setLoginError('An unexpected error occurred. Please try again.');
+      setLoginError(err.message || 'Unable to connect to administration server.');
     } finally {
       setLoginLoading(false);
     }
   };
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-xs overflow-y-auto">

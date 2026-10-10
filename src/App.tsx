@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useUser, useClerk } from '@clerk/clerk-react';
+import { useUser, useClerk, useAuth } from '@clerk/clerk-react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { AboutSection } from './components/AboutSection';
@@ -46,6 +46,7 @@ export default function App() {
   // -- Clerk Auth Hooks ------------------------------------------------------
   const { user: clerkUser, isLoaded: isClerkUserLoaded, isSignedIn: isClerkSignedIn } = useUser();
   const { signOut: clerkSignOut } = useClerk();
+  const { getToken } = useAuth();
 
   // -- Patient User State ----------------------------------------------------
   const [user, setUser] = useState<UserProfile>(() => {
@@ -53,10 +54,9 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed?.email && (parsed.email.toLowerCase().includes('yashdhawale') || parsed.email.toLowerCase().includes('medinest.in'))) {
-          return { name: 'Guest Patient', phone: '', email: '', isLoggedIn: false };
+        if (parsed?.isLoggedIn && parsed?.email) {
+          return parsed;
         }
-        return parsed;
       } catch (e) { /* ignore */ }
     }
     return {
@@ -163,13 +163,8 @@ export default function App() {
   }, [isClerkUserLoaded, isClerkSignedIn, clerkUser]);
 
   // -- Patient Appointments State --------------------------------------------
-  const [appointments, setAppointments] = useState<Appointment[]>(() => {
-    const saved = localStorage.getItem('mediconnect_appointments');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    return [];
-  });
+  // Clean initialization: isolated per user identity, never shared across accounts
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   // -- Doctor Portal State ---------------------------------------------------
   const [isDoctorPortalOpen, setIsDoctorPortalOpen] = useState(false);
@@ -188,7 +183,6 @@ export default function App() {
 
   const [authCallbackNotice, setAuthCallbackNotice] = useState<string | null>(null);
 
-  // Detect `/admin` and `/auth/callback` URL routes on mount
   // Detect `/admin` URL route on mount
   useEffect(() => {
     if (window.location.pathname === '/admin') {
@@ -210,6 +204,56 @@ export default function App() {
     });
   }, []);
 
+  // -- Load patient appointments from MySQL with strict user isolation -------
+  const loadPatientAppointments = React.useCallback(async () => {
+    const patientId = user.id || clerkUser?.id;
+    if (!patientId || (!user.isLoggedIn && !isClerkSignedIn)) {
+      setAppointments([]);
+      return;
+    }
+    try {
+      let token: string | null = null;
+      try {
+        token = await getToken();
+      } catch (_) {}
+
+      const data = await fetchPatientAppointments(patientId, token || undefined);
+      // Explicitly set array: if empty (0 past consultations), it sets []
+      const validData = Array.isArray(data) ? data : [];
+      setAppointments(validData);
+      localStorage.setItem(`mediconnect_appointments_${patientId}`, JSON.stringify(validData));
+    } catch (_err) {
+      // Fallback to user-isolated cached data if offline
+      const cached = localStorage.getItem(`mediconnect_appointments_${patientId}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) setAppointments(parsed);
+        } catch (_) {}
+      }
+    }
+  }, [user.id, user.isLoggedIn, clerkUser?.id, isClerkSignedIn, getToken]);
+
+  // Reset & re-load appointments whenever patient identity changes or logs out
+  useEffect(() => {
+    const activePatientId = user.id || clerkUser?.id;
+    if (!activePatientId || (!user.isLoggedIn && !isClerkSignedIn)) {
+      setAppointments([]);
+    } else {
+      // Preload user's own cached appointments if present to avoid flicker
+      const cached = localStorage.getItem(`mediconnect_appointments_${activePatientId}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) setAppointments(parsed);
+        } catch (_) {}
+      } else {
+        setAppointments([]);
+      }
+      loadPatientAppointments();
+    }
+  }, [user.id, user.isLoggedIn, clerkUser?.id, isClerkSignedIn, loadPatientAppointments]);
+
   // -- Load doctor appointments from MySQL whenever loggedInDoctor changes --
   useEffect(() => {
     if (loggedInDoctor?.id) {
@@ -219,10 +263,13 @@ export default function App() {
     }
   }, [loggedInDoctor?.id]);
 
-  // -- Sync state to localStorage --------------------------------------------
+  // -- Sync user-isolated appointments to localStorage ------------------------
   useEffect(() => {
-    localStorage.setItem('mediconnect_appointments', JSON.stringify(appointments));
-  }, [appointments]);
+    const activePatientId = user.id || clerkUser?.id;
+    if (activePatientId && (user.isLoggedIn || isClerkSignedIn)) {
+      localStorage.setItem(`mediconnect_appointments_${activePatientId}`, JSON.stringify(appointments));
+    }
+  }, [appointments, user.id, clerkUser?.id, user.isLoggedIn, isClerkSignedIn]);
 
   useEffect(() => {
     localStorage.setItem('mediconnect_user', JSON.stringify(user));
@@ -248,6 +295,49 @@ export default function App() {
   const [authModalTab, setAuthModalTab] = useState<'signin' | 'signup'>('signin');
   const [authCustomMessage, setAuthCustomMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Auto-sync appointments when patient dashboard opens or every 3 seconds while open
+  useEffect(() => {
+    if (!isDashboardOpen) return;
+    loadPatientAppointments();
+    const interval = setInterval(() => {
+      loadPatientAppointments();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isDashboardOpen, loadPatientAppointments]);
+
+  // Real-time synchronization via Server-Sent Events (SSE) for patient appointments
+  useEffect(() => {
+    const activePatientId = user.id || clerkUser?.id;
+    if (!activePatientId || (!user.isLoggedIn && !isClerkSignedIn)) return;
+
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`${API_BASE_URL}/appointments/events?patientId=${encodeURIComponent(activePatientId)}`);
+      
+      eventSource.addEventListener('appointment_update', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.action === 'appointment_completed' || data.action === 'appointment_updated') {
+            loadPatientAppointments();
+          }
+        } catch (_) {
+          loadPatientAppointments();
+        }
+      });
+
+      eventSource.onerror = () => {
+        // SSE connection dropped; 3s auto-poll when dashboard is open acts as robust fallback
+      };
+    } catch (_) {}
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [user.id, clerkUser?.id, user.isLoggedIn, isClerkSignedIn, loadPatientAppointments]);
 
   // -- Helpers ---------------------------------------------------------------
   const showToast = (msg: string) => {
@@ -347,19 +437,25 @@ export default function App() {
     showToast(`Appointment confirmed with ${newAppointment.doctorName}!`);
   };
 
-  const handleCancelAppointment = (id: string) => {
+  const handleCancelAppointment = async (id: string) => {
     setAppointments(prev =>
       prev.map(a => a.id === id ? { ...a, status: 'cancelled' as const } : a)
     );
-    cancelAppointmentInDB(id);
+    let token: string | null = null;
+    try { token = await getToken(); } catch (_) {}
+    const patientId = user.id || clerkUser?.id;
+    await cancelAppointmentInDB(id, undefined, token || undefined, patientId);
     showToast('Appointment successfully cancelled. ₹ Refund initiated.');
   };
 
-  const handleRescheduleAppointment = (id: string, newDate: string, newTime: string) => {
+  const handleRescheduleAppointment = async (id: string, newDate: string, newTime: string) => {
     setAppointments(prev =>
       prev.map(a => a.id === id ? { ...a, date: newDate, timeSlot: newTime } : a)
     );
-    rescheduleAppointmentInDB(id, newDate, newTime);
+    let token: string | null = null;
+    try { token = await getToken(); } catch (_) {}
+    const patientId = user.id || clerkUser?.id;
+    await rescheduleAppointmentInDB(id, newDate, newTime, token || undefined, patientId);
     showToast('Appointment rescheduled with updated time slot!');
   };
 
@@ -400,6 +496,8 @@ export default function App() {
     setLoggedInDoctor(null);
     setIsDoctorPortalOpen(false);
     localStorage.removeItem('mediconnect_user');
+    localStorage.removeItem('mediconnect_appointments');
+    setAppointments([]);
     setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
     showToast('Signed out of Doctor Portal.');
   };
@@ -462,7 +560,13 @@ export default function App() {
           appointments={doctorAppointments}
           onUpdateDoctor={setLoggedInDoctor}
           onUpdateSchedule={setDoctorSchedule}
-          onUpdateAppointments={setDoctorAppointments}
+          onUpdateAppointments={(updated) => {
+            setDoctorAppointments(updated);
+            setAppointments(prev => prev.map(p => {
+              const match = updated.find(u => u.id === p.id);
+              return match ? { ...p, ...match } : p;
+            }));
+          }}
           onBackToPatientSite={() => setIsDoctorPortalOpen(false)}
           onDoctorLogout={handleDoctorLogout}
         />
@@ -617,11 +721,18 @@ export default function App() {
           onRescheduleAppointment={handleRescheduleAppointment}
           onViewReceipt={handleViewReceipt}
           onBookDoctorAgain={handleDirectBook}
+          onRefreshAppointments={loadPatientAppointments}
           onLogout={async () => {
+            const activeId = user.id || clerkUser?.id;
             try {
               await clerkSignOut();
             } catch (_) {}
             setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
+            setAppointments([]);
+            localStorage.removeItem('mediconnect_appointments');
+            if (activeId) {
+              localStorage.removeItem(`mediconnect_appointments_${activeId}`);
+            }
             setIsDashboardOpen(false);
             showToast('Signed out of MediNest account.');
           }}

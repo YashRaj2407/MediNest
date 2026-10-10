@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { formatINR } from '../lib/formatCurrency';
 import { DoctorAuthData, DoctorScheduleConfig, Appointment, Prescription } from '../types';
+import { useAuth } from '@clerk/clerk-react';
+import { completeAppointmentInDB } from '../lib/appointments';
 import { DoctorScheduleTab } from './doctor/DoctorScheduleTab';
 import { DoctorAppointmentsTab } from './doctor/DoctorAppointmentsTab';
 import { DoctorPatientsTab } from './doctor/DoctorPatientsTab';
@@ -60,12 +62,22 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
   const [activeVideoAppt, setActiveVideoAppt] = useState<Appointment | null>(null);
   const [activePrescriptionAppt, setActivePrescriptionAppt] = useState<Appointment | null>(null);
 
+  const isApptToday = (dateStr: string) => {
+    if (!dateStr) return false;
+    const dLower = dateStr.toLowerCase();
+    if (dLower.includes('today')) return true;
+    const now = new Date();
+    const nowDayStr = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).toLowerCase();
+    const nowDayStr2 = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase();
+    return dLower.includes(nowDayStr) || dLower.includes(nowDayStr2);
+  };
+
   // Filter calculations
   const todayAppts = appointments.filter(
-    a => ((a.date || '').toLowerCase().includes('today') || (a.date || '').toLowerCase().includes('sep 11')) && a.status !== 'cancelled'
+    a => isApptToday(a.date) && a.status !== 'cancelled'
   );
   const upcomingAppts = appointments.filter(
-    a => a.status === 'upcoming' && !(a.date || '').toLowerCase().includes('today') && !(a.date || '').toLowerCase().includes('sep 11')
+    a => a.status === 'upcoming' && !isApptToday(a.date)
   );
   const completedAppts = appointments.filter(a => a.status === 'completed');
 
@@ -75,12 +87,60 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
   // Next up appointment for prominent hero callout
   const nextUpAppointment = todayAppts.find(a => a.status === 'upcoming') || appointments.find(a => a.status === 'upcoming');
 
+  const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+  const { getToken } = useAuth();
+  const [completeLoadingId, setCompleteLoadingId] = useState<string | null>(null);
+  const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+
   // Handlers for Appointment updates
-  const handleMarkCompleted = (appointmentId: string) => {
-    const updated = appointments.map(a => 
-      a.id === appointmentId ? { ...a, status: 'completed' as const } : a
-    );
-    onUpdateAppointments(updated);
+  const handleMarkCompleted = async (appointmentId: string) => {
+    const target = appointments.find(a => a.id === appointmentId);
+    if (!target) return;
+
+    try {
+      setCompleteLoadingId(appointmentId);
+
+      let token: string | null = null;
+      try {
+        if (getToken) token = await getToken();
+      } catch (_) {}
+
+      const doctorUserId = (doctor as any).userId || doctor.id;
+      const res = await completeAppointmentInDB(appointmentId, token || undefined, doctorUserId);
+
+      // Backend confirmed database update success!
+      const defaultRx: Prescription = target.prescription || {
+        id: `RX-MN-${appointmentId.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase() || '2026'}`,
+        appointmentId,
+        diagnosis: target.visitReason ? `${target.visitReason} - Clinical Consultation` : 'General Clinical Consultation',
+        medicines: [
+          { name: 'Tab Paracetamol 650mg', dosage: '1 Tab', timing: 'Sos after food (Max 3/day)', duration: '3 Days' },
+          { name: 'Tab Pantoprazole 40mg', dosage: '1 Tab', timing: 'Empty stomach in morning', duration: '5 Days' }
+        ],
+        advice: 'Adequate hydration (2.5L water/day), warm saline gargles, light diet.',
+        followUpDate: 'After 7 days',
+        issuedAt: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+      };
+
+      const updated = appointments.map(a => 
+        a.id === appointmentId ? {
+          ...a,
+          status: 'completed' as const,
+          prescription: res.data?.prescription || defaultRx
+        } : a
+      );
+
+      // Update doctor appointment state
+      onUpdateAppointments(updated);
+      setCompletionNotice(`Appointment ${appointmentId} marked as completed.`);
+      setTimeout(() => setCompletionNotice(null), 4000);
+    } catch (err: any) {
+      console.error('[Error marking appointment completed]:', err);
+      setCompletionNotice(`Failed to mark appointment completed: ${err.message || 'Server error'}`);
+      setTimeout(() => setCompletionNotice(null), 5000);
+    } finally {
+      setCompleteLoadingId(null);
+    }
   };
 
   const handleReschedule = (appointmentId: string, newDate: string, newTime: string) => {
@@ -104,18 +164,65 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
     onUpdateAppointments(updated);
   };
 
-  const handleSavePrescription = (prescription: Prescription) => {
+  const handleSavePrescription = async (appointmentIdOrRx: string | Prescription, maybeRx?: Prescription) => {
+    let apptId: string;
+    let rxData: Prescription;
+
+    if (typeof appointmentIdOrRx === 'string') {
+      apptId = appointmentIdOrRx;
+      rxData = maybeRx || ({} as Prescription);
+    } else {
+      rxData = appointmentIdOrRx;
+      apptId = rxData.appointmentId || '';
+    }
+
+    if (!apptId && activePrescriptionAppt) {
+      apptId = activePrescriptionAppt.id;
+    }
+
+    const prescription: Prescription = {
+      ...rxData,
+      appointmentId: apptId,
+      issuedAt: rxData.issuedAt || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    };
+
     const updated = appointments.map(a => 
-      a.id === prescription.appointmentId ? { ...a, prescription, status: 'completed' as const } : a
+      a.id === apptId ? { ...a, prescription } : a
     );
     onUpdateAppointments(updated);
-    setActivePrescriptionAppt(null);
+
+    if (activePrescriptionAppt && activePrescriptionAppt.id === apptId) {
+      setActivePrescriptionAppt({
+        ...activePrescriptionAppt,
+        prescription
+      });
+    }
+
+    if (apptId) {
+      try {
+        let token: string | null = null;
+        try { if (getToken) token = await getToken(); } catch (_) {}
+        const doctorUserId = (doctor as any).userId || doctor.id;
+        await fetch(`${API_BASE_URL}/appointments/${encodeURIComponent(apptId)}/prescription`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            'x-user-id': doctorUserId,
+            'x-user-role': 'doctor',
+          },
+          body: JSON.stringify({ prescription }),
+        });
+      } catch (err) {
+        console.error('[Error saving prescription]:', err);
+      }
+    }
   };
 
-  const handleCompleteAndPrescribe = (appointmentId: string) => {
+  const handleCompleteAndPrescribe = async (appointmentId: string) => {
     const target = appointments.find(a => a.id === appointmentId);
     if (target) {
-      handleMarkCompleted(appointmentId);
+      await handleMarkCompleted(appointmentId);
       setActiveVideoAppt(null);
       setActivePrescriptionAppt(target);
     }
@@ -230,6 +337,21 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
 
       {/* Main Content Body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+        {completionNotice && (
+          <div className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs font-semibold flex items-center justify-between gap-3 shadow-xs animate-fadeIn">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{completionNotice}</span>
+            </div>
+            <button
+              onClick={() => setCompletionNotice(null)}
+              className="text-emerald-700 hover:text-emerald-900 text-xs font-bold px-2 py-1 rounded-lg"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* TAB: OVERVIEW / DASHBOARD */}
         {activeTab === 'overview' && (
           <div className="space-y-8">
@@ -478,6 +600,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
         {/* TAB: MY SCHEDULE */}
         {activeTab === 'schedule' && (
           <DoctorScheduleTab
+            doctorId={doctor.id}
             schedule={schedule}
             onUpdateSchedule={onUpdateSchedule}
             appointments={appointments}

@@ -31,18 +31,31 @@ export const DoctorPrescriptionModal: React.FC<DoctorPrescriptionModalProps> = (
 }) => {
   if (!isOpen || !appointment) return null;
 
-  const existingRx = appointment.prescription;
-
-  const [diagnosis, setDiagnosis] = useState(existingRx?.diagnosis || '');
-  const [medicines, setMedicines] = useState<PrescriptionMedicine[]>(
-    existingRx?.medicines || [
-      { name: 'Tab Paracetamol 650mg', dosage: '1 Tab', timing: 'Sos after food (Max 3/day)', duration: '3 Days' },
-      { name: 'Tab Pantoprazole 40mg', dosage: '1 Tab', timing: 'Empty stomach in morning', duration: '5 Days' }
-    ]
-  );
-  const [advice, setAdvice] = useState(existingRx?.advice || 'Adequate hydration (2.5L water/day), warm saline gargling, light diet.');
-  const [followUpDate, setFollowUpDate] = useState(existingRx?.followUpDate || 'After 5 days');
+  const [diagnosis, setDiagnosis] = useState('');
+  const [medicines, setMedicines] = useState<PrescriptionMedicine[]>([]);
+  const [advice, setAdvice] = useState('');
+  const [followUpDate, setFollowUpDate] = useState('After 7 days');
   const [isSaved, setIsSaved] = useState(false);
+
+  // Sync state whenever modal opens or target appointment changes
+  React.useEffect(() => {
+    if (!appointment) return;
+    const rx = appointment.prescription;
+    setDiagnosis(
+      rx?.diagnosis || (appointment.visitReason ? `${appointment.visitReason} - Evaluation` : 'General Clinical Consultation')
+    );
+    setMedicines(
+      rx?.medicines && rx.medicines.length > 0
+        ? rx.medicines
+        : [
+            { name: 'Tab Paracetamol 650mg', dosage: '1 Tab', timing: 'Sos after food (Max 3/day)', duration: '3 Days' },
+            { name: 'Tab Pantoprazole 40mg', dosage: '1 Tab', timing: 'Empty stomach in morning', duration: '5 Days' }
+          ]
+    );
+    setAdvice(rx?.advice || 'Adequate hydration (2.5L water/day), warm saline gargles, light nutritious diet.');
+    setFollowUpDate(rx?.followUpDate || 'After 7 days');
+    setIsSaved(false);
+  }, [appointment, isOpen]);
 
   const docName = doctor?.name || appointment.doctorName || 'Dr. Rohan Gupta';
   const docSpecialty = doctor?.specialty || appointment.doctorSpecialty || 'General Physician';
@@ -74,14 +87,18 @@ export const DoctorPrescriptionModal: React.FC<DoctorPrescriptionModalProps> = (
     setMedicines(updated);
   };
 
-  const buildCurrentPrescription = (): Prescription => ({
-    id: existingRx?.id || `RX-AC-2026-${Math.floor(100 + Math.random() * 900)}`,
-    diagnosis: diagnosis || 'General Medical Assessment',
-    medicines: medicines.filter(m => m.name.trim().length > 0),
-    advice,
-    followUpDate,
-    issuedAt: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-  });
+  const buildCurrentPrescription = (): Prescription => {
+    const rx = appointment.prescription;
+    return {
+      id: rx?.id || `RX-MN-${appointment.id.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase() || '2026'}`,
+      appointmentId: appointment.id,
+      diagnosis: diagnosis.trim() || (appointment.visitReason ? `${appointment.visitReason} - Evaluation` : 'General Clinical Consultation'),
+      medicines: medicines.filter(m => m.name.trim().length > 0),
+      advice,
+      followUpDate,
+      issuedAt: rx?.issuedAt || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    };
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +113,7 @@ export const DoctorPrescriptionModal: React.FC<DoctorPrescriptionModalProps> = (
     setTimeout(() => {
       setIsSaved(false);
       onClose();
-    }, 1200);
+    }, 1000);
   };
 
   const handleDownloadPDF = () => {

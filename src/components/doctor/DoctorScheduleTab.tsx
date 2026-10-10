@@ -168,10 +168,20 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
 
   // Helper to determine slot status
   const getSlotDetails = (timeSlot: string) => {
-    // Check database schedule blocks first
+    // Check database schedule blocks first — check 'break' type first for priority
     const slotStartISO = parseSlotToISO(timeSlot);
     const slotStartMs = new Date(slotStartISO).getTime();
     const slotEndMs = slotStartMs + (schedule.slotDurationMinutes || 30) * 60000;
+
+    const breakBlock = dbBlocks.find(b => {
+      const bStart = new Date(b.start_datetime).getTime();
+      const bEnd = new Date(b.end_datetime).getTime();
+      return b.type === 'break' && slotStartMs < bEnd && slotEndMs > bStart;
+    });
+
+    if (breakBlock) {
+      return { status: 'break' as const, label: breakBlock.reason || 'Doctor on Break', info: 'Configured Break' };
+    }
 
     const dbBlock = dbBlocks.find(b => {
       const bStart = new Date(b.start_datetime).getTime();
@@ -180,9 +190,6 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
     });
 
     if (dbBlock) {
-      if (dbBlock.type === 'break') {
-        return { status: 'break' as const, label: dbBlock.reason || 'Doctor on Break', info: 'Configured Break' };
-      }
       return { status: 'blocked' as const, label: dbBlock.reason || 'Blocked Slot', info: dbBlock.reason || 'Doctor Unavailable' };
     }
 
@@ -247,21 +254,56 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
     }
   };
 
-  const handleToggleBlockDay = () => {
-    const isBlocked = schedule.blockedDays.includes(selectedDayTab);
-    if (isBlocked) {
+  const handleToggleBlockDay = async () => {
+    const targetDateObj = getSelectedDateObj();
+    const dStartObj = new Date(targetDateObj);
+    dStartObj.setHours(0, 0, 0, 0);
+    const dEndObj = new Date(targetDateObj);
+    dEndObj.setHours(23, 59, 59, 999);
+
+    const dayStartISO = dStartObj.toISOString();
+    const dayEndISO = dEndObj.toISOString();
+
+    const existingDayBlock = dbBlocks.find(b => {
+      const bStart = new Date(b.start_datetime).getTime();
+      const bEnd = new Date(b.end_datetime).getTime();
+      const dStart = new Date(dayStartISO).getTime();
+      const dEnd = new Date(dayEndISO).getTime();
+      return (b.type === 'blocked' || b.type === 'leave') && (bStart <= dStart + 3600000 && bEnd >= dEnd - 3600000);
+    });
+
+    if (existingDayBlock || schedule.blockedDays.includes(selectedDayTab)) {
+      if (existingDayBlock) {
+        try {
+          await fetch(`${API_BASE_URL}/slots/blocks/${existingDayBlock.id}`, { method: 'DELETE' });
+        } catch (_) {}
+      }
       onUpdateSchedule({
         ...schedule,
         blockedDays: schedule.blockedDays.filter(d => d !== selectedDayTab)
       });
-      showNotification(`Reopened full schedule for ${selectedDayTab}.`);
+      showNotification(`Reopened full schedule for ${selectedDayTab}. Patient booking active.`);
     } else {
+      try {
+        await fetch(`${API_BASE_URL}/slots/blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            doctorId,
+            startDatetime: dayStartISO,
+            endDatetime: dayEndISO,
+            type: 'blocked',
+            reason: `Doctor Unavailable (${selectedDayTab} Blocked)`,
+          }),
+        });
+      } catch (_) {}
       onUpdateSchedule({
         ...schedule,
         blockedDays: [...schedule.blockedDays, selectedDayTab]
       });
-      showNotification(`Blocked entire day (${selectedDayTab}). No patients can book slots on this date.`);
+      showNotification(`Blocked entire day (${selectedDayTab}). Saved to database & hidden from patients.`);
     }
+    fetchDbBlocks();
   };
 
   // Step 1: Initiate Break Creation (Checks conflicts first)
@@ -393,6 +435,16 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
       showNotification('Break removed. Affected slots reopened for patient booking.');
     } catch (err: any) {
       showNotification(`Failed to remove break: ${err.message}`);
+    }
+    fetchDbBlocks();
+  };
+
+  const handleRemoveLeave = async (id: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/slots/blocks/${id}`, { method: 'DELETE' });
+      showNotification('Leave removed. Schedule reopened for patient booking.');
+    } catch (err: any) {
+      showNotification(`Failed to remove leave: ${err.message}`);
     }
     fetchDbBlocks();
   };
@@ -616,6 +668,40 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
             )}
           </div>
         </div>
+
+        {/* Active Leaves & Vacations */}
+        {dbBlocks.filter(b => b.type === 'leave').length > 0 && (
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-rose-950 flex items-center gap-1.5">
+                <CalendarRange className="w-4 h-4 text-rose-700" /> Active Leaves &amp; Vacations
+              </span>
+              <span className="text-[11px] text-rose-800 font-semibold">
+                {dbBlocks.filter(b => b.type === 'leave').length} Leave(s) Active
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              {dbBlocks.filter(b => b.type === 'leave').map(lv => (
+                <div key={lv.id} className="p-3 rounded-xl bg-white border border-rose-200 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-bold text-rose-900">
+                      {formatBlockTime(lv.start_datetime)} – {formatBlockTime(lv.end_datetime)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">{lv.reason || 'Doctor on Leave'}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveLeave(lv.id)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
+                    title="Remove Leave"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Time-Slot Timeline View */}

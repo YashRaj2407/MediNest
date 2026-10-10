@@ -15,7 +15,7 @@ import {
   ArrowLeft,
   Phone
 } from 'lucide-react';
-import { useSignIn, useSignUp } from '@clerk/clerk-react';
+import { useSignIn, useSignUp, useClerk } from '@clerk/clerk-react';
 import { UserProfile } from '../types';
 
 interface AuthModalProps {
@@ -33,6 +33,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialTab = 'signin',
   customMessage
 }) => {
+  const clerk = useClerk();
   const { isLoaded: isSignInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: isSignUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
 
@@ -54,11 +55,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
   const [resendCooldown, setResendCooldown] = useState<number>(0);
+  const [duplicateEmailError, setDuplicateEmailError] = useState(false);
+  const [reconcilingEmail, setReconcilingEmail] = useState(false);
 
   useEffect(() => {
     setActiveTab(initialTab);
     setAuthError(null);
+    setDuplicateEmailError(false);
     setSuccessMessage(null);
+
     setPendingVerification(false);
     setVerificationCode('');
   }, [initialTab, isOpen]);
@@ -104,24 +109,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (result.status === 'complete') {
         await setSignInActive({ session: result.createdSessionId });
 
-        const userId = (result as any).createdUserId || (signIn as any)?.userData?.id;
+        // Retrieve verified Clerk User ID (never use createdSessionId as userId)
+        const activeSession = clerk.client?.sessions?.find(s => s.id === result.createdSessionId);
+        const verifiedUserId =
+          (result as any).createdUserId ||
+          activeSession?.user?.id ||
+          clerk.user?.id ||
+          undefined;
+
         const formattedPhone = phoneNumber.trim() ? (phoneNumber.trim().startsWith('+') ? phoneNumber.trim() : `+91 ${phoneNumber.trim()}`) : '';
         const loggedInUser: UserProfile = {
-          id: userId || undefined,
+          id: verifiedUserId,
           name: fullName.trim() || email.trim().split('@')[0],
           phone: formattedPhone,
           email: email.trim(),
           isLoggedIn: true,
         };
 
-        // Sync with backend profile
+        // Sync with backend profile using verified user ID and session context
         try {
           const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
           await fetch(`${API_BASE_URL}/auth/sync-profile`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              userId: userId || result.createdSessionId,
+              userId: verifiedUserId,
+              sessionId: result.createdSessionId,
               email: email.trim(),
               fullName: loggedInUser.name,
               role: 'patient',
@@ -165,8 +178,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setAuthError('Please enter a valid email address.');
       return;
     }
-    if (password.length < 8) {
-      setAuthError('Password must be at least 8 characters long.');
+    if (password.length < 15) {
+      setAuthError('Password must be at least 15 characters long.');
       return;
     }
 
@@ -232,11 +245,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         err?.errors?.[0]?.message ||
         err?.message ||
         'Registration failed. Please check your information.';
-      setAuthError(clerkMsg);
+
+      const isDuplicate = 
+        clerkMsg.toLowerCase().includes('taken') ||
+        clerkMsg.toLowerCase().includes('already') ||
+        err?.errors?.[0]?.code === 'form_identifier_exists';
+
+      if (isDuplicate) {
+        setDuplicateEmailError(true);
+        setAuthError('That email address is already registered in the authentication system.');
+      } else {
+        setDuplicateEmailError(false);
+        setAuthError(clerkMsg);
+      }
     } finally {
       setLoading(false);
     }
   };
+
 
   // ── Clerk Email Verification Handler ──────────────────────────────────────
   const handleVerifyCode = async (e: React.FormEvent) => {
@@ -380,13 +406,62 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Modal Body */}
         <div className="p-6 space-y-4">
           {authError && (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-start gap-2.5 animate-fadeIn">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold">{authError}</p>
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium space-y-2.5 animate-fadeIn">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">{authError}</p>
+                </div>
               </div>
+
+              {duplicateEmailError && (
+                <div className="pt-2 border-t border-rose-200/80 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('signin');
+                      setAuthError(null);
+                      setDuplicateEmailError(false);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-[#0C182B] text-white font-bold text-xs hover:bg-[#162C4E] transition-colors cursor-pointer"
+                  >
+                    Sign In with this Email
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reconcilingEmail}
+                    onClick={async () => {
+                      setReconcilingEmail(true);
+                      try {
+                        const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+                        const res = await fetch(`${API_BASE_URL}/auth/reconcile-deleted-account`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ email: email.trim() })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                          setSuccessMessage('Previous authentication record cleared! You can now create a new account.');
+                          setAuthError(null);
+                          setDuplicateEmailError(false);
+                        } else {
+                          setAuthError(data.error || 'Could not reconcile email automatically. Please use Sign In.');
+                        }
+                      } catch (e: any) {
+                        setAuthError(e.message || 'Network error during reconciliation.');
+                      } finally {
+                        setReconcilingEmail(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-rose-300 text-rose-900 font-bold text-xs hover:bg-rose-100 transition-colors cursor-pointer"
+                  >
+                    {reconcilingEmail ? 'Reconciling...' : 'Account Was Deleted? Release Email'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
+
 
           {successMessage && (
             <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-start gap-2.5 animate-fadeIn">
@@ -513,17 +588,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                  Password * {activeTab === 'signup' && <span className="normal-case font-normal text-slate-400">(min 8 characters)</span>}
+                  Password * {activeTab === 'signup' && <span className="normal-case font-normal text-slate-400">(min 15 characters)</span>}
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                   <input
                     type="password"
                     required
-                    minLength={activeTab === 'signup' ? 8 : 1}
+                    minLength={activeTab === 'signup' ? 15 : 1}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="••••••••••••••••"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-teal-600"
                   />
                 </div>

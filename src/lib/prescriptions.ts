@@ -2,27 +2,92 @@ import jsPDF from 'jspdf';
 import { Appointment, Prescription, DoctorAuthData, Doctor } from '../types';
 
 /**
+ * Computes an effective prescription object for an appointment.
+ * If the appointment has a stored prescription, it returns that.
+ * Otherwise, generates a complete NMC-compliant prescription based on doctor specialty & visit reason.
+ */
+export function getEffectivePrescription(
+  appointment: Appointment,
+  rxOverride?: Prescription | null
+): Prescription {
+  if (rxOverride) return rxOverride;
+  if (appointment.prescription) return appointment.prescription;
+
+  const specialty = appointment.doctorSpecialty || 'General Physician';
+  const rxId = `RX-MN-${appointment.id.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase() || '2026'}`;
+  
+  let diagnosis = 'General Consultation & Health Assessment';
+  let medicines = [
+    { name: 'Tab Paracetamol 650mg', dosage: '1 Tab', timing: 'SOS after food (Max 3/day)', duration: '3 Days' },
+    { name: 'Tab Pantoprazole 40mg', dosage: '1 Tab', timing: 'Once daily before breakfast', duration: '5 Days' }
+  ];
+  let advice = 'Maintain good hydration (2.5L water/day), adequate rest, and a light balanced diet.';
+
+  if (specialty.toLowerCase().includes('cardio')) {
+    diagnosis = 'Cardiovascular Health Review & BP Monitoring';
+    medicines = [
+      { name: 'Tab Telmisartan 40mg', dosage: '1 Tab', timing: 'Once daily after breakfast', duration: '14 Days' },
+      { name: 'Tab Atorvastatin 10mg', dosage: '1 Tab', timing: 'Once daily at bedtime', duration: '14 Days' }
+    ];
+    advice = 'Low sodium diet, daily 30-min moderate walking, record BP twice daily.';
+  } else if (specialty.toLowerCase().includes('derma')) {
+    diagnosis = 'Dermatological Barrier Protection & Care';
+    medicines = [
+      { name: 'Tab Cetirizine 10mg', dosage: '1 Tab', timing: 'Once daily at bedtime', duration: '5 Days' },
+      { name: 'Emollient Moisturizing Lotion', dosage: 'Apply gently', timing: 'Twice daily after bath', duration: '10 Days' }
+    ];
+    advice = 'Avoid hot showers, use gentle soap, apply moisturizer immediately after bathing.';
+  } else if (specialty.toLowerCase().includes('pediatric')) {
+    diagnosis = 'Pediatric Growth & Wellness Assessment';
+    medicines = [
+      { name: 'Syp Paracetamol (120mg/5ml)', dosage: '5 ml', timing: 'SOS for fever > 100°F', duration: '3 Days' },
+      { name: 'Multivitamin Drops', dosage: '1 ml', timing: 'Once daily morning after feed', duration: '15 Days' }
+    ];
+    advice = 'Adequate fluid intake, monitor temperature, keep comfortable.';
+  } else if (specialty.toLowerCase().includes('ortho')) {
+    diagnosis = 'Musculoskeletal Strain & Posture Evaluation';
+    medicines = [
+      { name: 'Tab Aceclofenac + Paracetamol', dosage: '1 Tab', timing: 'Twice daily after food', duration: '5 Days' },
+      { name: 'Tab Calcium + Vit D3', dosage: '1 Tab', timing: 'Once daily after dinner', duration: '15 Days' }
+    ];
+    advice = 'Avoid heavy lifting, apply warm compress, maintain ergonomic posture.';
+  }
+
+  return {
+    id: rxId,
+    diagnosis: appointment.visitReason ? `${appointment.visitReason} - Clinical Review` : diagnosis,
+    medicines,
+    advice,
+    followUpDate: 'After 7 Days',
+    issuedAt: appointment.date || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  };
+}
+
+/**
  * Generates and downloads a clean, professional medical A4 prescription PDF using jsPDF.
  */
 export function generatePrescriptionPDF(
   appointment: Appointment,
-  doctor?: DoctorAuthData | Doctor | null,
-  rxOverride?: Prescription
+  doctorOrRx?: DoctorAuthData | Doctor | Prescription | null,
+  rxOverride?: Prescription | null
 ): void {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
 
-  const rx = rxOverride || appointment.prescription || {
-    id: `RX-AC-2026-${Math.floor(100 + Math.random() * 900)}`,
-    diagnosis: 'General Health Assessment & Seasonal Flu Prevention',
-    medicines: [
-      { name: 'Tab Paracetamol 650mg', dosage: '1 Tab', timing: 'Sos after food (Max 3/day)', duration: '3 Days' },
-      { name: 'Tab Pantoprazole 40mg', dosage: '1 Tab', timing: 'Empty stomach in morning', duration: '5 Days' }
-    ],
-    advice: 'Adequate hydration (2.5L water/day), warm saline gargles, light diet.',
-    followUpDate: 'After 5 days',
-    issuedAt: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-  };
+  // Determine if 2nd parameter is Prescription or Doctor
+  let rx: Prescription;
+  let doctor: DoctorAuthData | Doctor | null = null;
+
+  if (doctorOrRx && 'diagnosis' in doctorOrRx && 'medicines' in doctorOrRx) {
+    rx = doctorOrRx as Prescription;
+  } else {
+    doctor = (doctorOrRx as DoctorAuthData | Doctor) || null;
+    rx = rxOverride || getEffectivePrescription(appointment);
+  }
+
+  if (!rx) {
+    rx = getEffectivePrescription(appointment);
+  }
 
   // Doctor Info Defaults
   const docName = doctor?.name || appointment.doctorName || 'Dr. Rohan Gupta';

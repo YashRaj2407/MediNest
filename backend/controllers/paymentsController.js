@@ -20,6 +20,9 @@ function toMySQLDatetime(dateVal) {
   }
   const d = new Date(dateVal);
   if (isNaN(d.getTime())) return null;
+  if (d.getFullYear() < 2025) {
+    d.setFullYear(new Date().getFullYear() || 2026);
+  }
   // Convert UTC to IST (+05:30)
   const istTime = new Date(d.getTime() + (5.5 * 60 * 60 * 1000));
   return istTime.toISOString().slice(0, 19).replace('T', ' ');
@@ -179,21 +182,47 @@ export async function verifyRazorpayPayment(req, res) {
       [razorpay_order_id]
     );
 
-    // 3. Ensure patient profile exists in profiles table
+    // 3. Ensure patient profile exists in profiles table with strict identity isolation
     const patientId = appointment.patient_id || `patient_${crypto.randomUUID()}`;
-    const patientEmail = appointment.patient_email || 'patient@medinest.in';
+    const patientEmail = (appointment.patient_email || 'patient@medinest.in').trim().toLowerCase();
     const patientName = appointment.patient_name || 'MediNest Patient';
     const patientPhone = appointment.patient_phone || null;
 
     console.log(`[Profile Sync] Upserting patient profile: id=${patientId}, email=${patientEmail}`);
-    await connection.query(
-      `INSERT INTO profiles (id, role, full_name, email, phone)
-       VALUES (?, 'patient', ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         full_name = COALESCE(VALUES(full_name), full_name),
-         phone = COALESCE(VALUES(phone), phone)`,
-      [patientId, patientName, patientEmail, patientPhone]
-    );
+    const [existingRows] = await connection.query(`SELECT id FROM profiles WHERE id = ?`, [patientId]);
+    if (existingRows.length > 0) {
+      await connection.query(
+        `UPDATE profiles SET
+           full_name = COALESCE(?, full_name),
+           phone = COALESCE(?, phone)
+         WHERE id = ?`,
+        [patientName, patientPhone, patientId]
+      );
+    } else {
+      // Check if an older profile with a different ID holds this email address
+      const [conflictingProfiles] = await connection.query(
+        `SELECT id, full_name FROM profiles WHERE LOWER(email) = ? AND id != ?`,
+        [patientEmail, patientId]
+      );
+      for (const oldP of conflictingProfiles) {
+        const safeSuffix = oldP.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'prev';
+        const archiveEmail = `archived_${safeSuffix}_${Date.now()}@medinest.archived`;
+        await connection.query(
+          `UPDATE profiles SET
+             email = ?,
+             account_status = CASE WHEN account_status = 'active' THEN 'deactivated' ELSE account_status END
+           WHERE id = ?`,
+          [archiveEmail, oldP.id]
+        );
+        console.log(`[Identity Isolation] Archived email for previous patient identity ${oldP.id} to preserve data isolation.`);
+      }
+
+      await connection.query(
+        `INSERT INTO profiles (id, role, full_name, email, phone, account_status)
+         VALUES (?, 'patient', ?, ?, ?, 'active')`,
+        [patientId, patientName, patientEmail, patientPhone]
+      );
+    }
 
     // 4. Format datetimes
     const startDT = toMySQLDatetime(appointment.start_datetime) || toMySQLDatetime(new Date());

@@ -6,6 +6,9 @@ import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import slotsRoutes from './routes/slotsRoutes.js';
 import paymentsRoutes from './routes/paymentsRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
+import reportsRoutes from './routes/reportsRoutes.js';
+
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });
@@ -34,6 +37,9 @@ app.use('/api/v1/doctors', doctorsRoutes);
 app.use('/api/v1/appointments', appointmentsRoutes);
 app.use('/api/v1/slots', slotsRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/reports', reportsRoutes);
+
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {

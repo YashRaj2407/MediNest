@@ -1,5 +1,5 @@
 import { formatINR } from '../lib/formatCurrency';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   X, 
   Star, 
@@ -16,11 +16,14 @@ import {
   AlertCircle,
   Share2,
   Bookmark,
-  RefreshCw
+  RefreshCw,
+  Flag
 } from 'lucide-react';
 import { Doctor, ConsultationType } from '../types';
 import { DoctorAvatar } from './DoctorAvatar';
 import { generateSlots, TimeSlot } from '../lib/slots';
+import { ReportDoctorModal } from './ReportDoctorModal';
+
 
 
 interface DoctorProfileModalProps {
@@ -53,6 +56,8 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [isSaved, setIsSaved] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [slotAlert, setSlotAlert] = useState<string | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
 
   // Generate next 7 days for booking calendar — memoized so it doesn't change on every render
   const nextDays = React.useMemo(() => Array.from({ length: 7 }, (_, i) => {
@@ -64,13 +69,13 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     return {
       weekday,
       dateStr: `${dayNum} ${month}`,
-      fullDateString: `${weekday}, ${dayNum} ${month}`,
+      fullDateString: `${weekday}, ${dayNum} ${month} ${d.getFullYear()}`,
       dayName: weekday,
       isoString: d.toISOString().split('T')[0]
     };
   }), []); // computed once per component mount
 
-  const fetchFreshSlots = React.useCallback((silent = false) => {
+  const fetchFreshSlots = useCallback((silent = false) => {
     if (!doctor) return;
     if (!silent) setLoadingSlots(true);
     setIsRefreshing(true);
@@ -101,6 +106,12 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     });
   }, [doctor, selectedDateIndex, nextDays, selectedSlot]);
 
+  // Always keep a ref to the latest fetchFreshSlots so SSE listener doesn't go stale
+  const fetchFreshSlotsRef = useRef(fetchFreshSlots);
+  useEffect(() => {
+    fetchFreshSlotsRef.current = fetchFreshSlots;
+  }, [fetchFreshSlots]);
+
   // Load slots when doctor or selected date changes
   useEffect(() => {
     if (!doctor) return;
@@ -108,6 +119,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   }, [doctor?.id, selectedDateIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Real-time synchronization via Server-Sent Events (SSE)
+  // Created ONCE per doctor — uses ref so it always calls the latest fetchFreshSlots
   useEffect(() => {
     if (!doctor?.id || !isOpen) return;
 
@@ -121,8 +133,8 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
         try {
           const data = JSON.parse(event.data);
           console.log('[SSE] Received schedule_update in DoctorProfileModal:', data);
-          // Silently refresh slots without loading spinner flash
-          fetchFreshSlots(true);
+          // Use ref so we always have the latest callback without reconnecting SSE
+          fetchFreshSlotsRef.current(true);
         } catch (err) {
           console.error('[SSE Parse Error]:', err);
         }
@@ -140,7 +152,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
         eventSource.close();
       }
     };
-  }, [doctor?.id, isOpen, fetchFreshSlots]);
+  }, [doctor?.id, isOpen]); // ← no fetchFreshSlots dep: SSE never reconnects on slot changes
 
   // ── EARLY RETURN GUARD (after all hooks) ───────────────────────────────────
   if (!isOpen || !doctor) return null;
@@ -210,11 +222,11 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
               </div>
             </div>
 
-            {/* Bookmark / Share buttons */}
+            {/* Bookmark / Report buttons */}
             <div className="flex sm:flex-col gap-2 shrink-0">
               <button
                 onClick={() => setIsSaved(!isSaved)}
-                className={`p-2.5 rounded-xl border transition-colors flex items-center justify-center ${
+                className={`p-2.5 rounded-xl border transition-colors flex items-center justify-center cursor-pointer ${
                   isSaved 
                     ? 'bg-teal-500 border-teal-500 text-slate-950 font-bold' 
                     : 'border-slate-700 hover:bg-slate-800 text-slate-300'
@@ -223,7 +235,16 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
               >
                 <Bookmark className="w-4 h-4" />
               </button>
+              <button
+                type="button"
+                onClick={() => setIsReportModalOpen(true)}
+                className="p-2.5 rounded-xl border border-slate-700 hover:bg-rose-500/20 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 transition-colors flex items-center justify-center cursor-pointer"
+                title="Report Doctor (Confidential Grievance)"
+              >
+                <Flag className="w-4 h-4" />
+              </button>
             </div>
+
           </div>
         </div>
 
@@ -495,6 +516,20 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   </div>
                 )}
 
+                {!loadingSlots && slotsList.length > 0 && slotsList.every(s => s.status === 'blocked') && (
+                  <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 flex items-center gap-3 font-semibold text-xs animate-in fade-in">
+                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                    <div>
+                      <div className="font-bold text-rose-900 text-xs sm:text-sm">
+                        Doctor Unavailable on {nextDays[selectedDateIndex]?.dateStr}
+                      </div>
+                      <div className="text-rose-700 text-[11px] mt-0.5">
+                        {slotsList[0]?.label || 'Doctor has blocked appointments or is on leave for this date. Please select another date.'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {loadingSlots ? (
                   <div className="py-6 text-center text-xs text-slate-400 animate-pulse">
                     Loading real-time availability...
@@ -557,7 +592,14 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
             </div>
           </div>
         </div>
+
+        <ReportDoctorModal
+          isOpen={isReportModalOpen}
+          onClose={() => setIsReportModalOpen(false)}
+          doctor={doctor}
+        />
       </div>
     </div>
   );
 };
+

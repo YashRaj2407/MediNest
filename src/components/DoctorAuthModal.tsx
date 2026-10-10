@@ -4,7 +4,7 @@ import {
   Eye, EyeOff, CheckCircle, Award, AlertCircle, Loader2,
   Play, Camera, FileText, ChevronDown, ArrowRight, UserPlus, LogIn, Phone
 } from 'lucide-react';
-import { useSignIn, useSignUp, useUser, useAuth } from '@clerk/clerk-react';
+import { useSignIn, useSignUp, useUser, useAuth, useClerk } from '@clerk/clerk-react';
 import { SPECIALTIES, INDIAN_CITIES } from '../data/specialtiesData';
 import { DoctorAuthData } from '../types';
 import { INITIAL_DOCTORS } from '../data/doctorsData';
@@ -28,6 +28,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   if (!isOpen) return null;
 
   // Clerk hooks
+  const clerk = useClerk();
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
   const { isSignedIn, isLoaded: authLoaded, getToken } = useAuth();
@@ -50,10 +51,14 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
   const [showRegPw, setShowRegPw] = useState(false);
   const [regClerkError, setRegClerkError] = useState('');
   const [regClerkLoading, setRegClerkLoading] = useState(false);
+  const [regDuplicateEmail, setRegDuplicateEmail] = useState(false);
+  const [regReconciling, setRegReconciling] = useState(false);
+  const [regSuccessNotice, setRegSuccessNotice] = useState('');
   const [pendingVerification, setPendingVerification] = useState(false);
   const [verifyCode, setVerifyCode] = useState('');
   const [verifyError, setVerifyError] = useState('');
   const [verifyLoading, setVerifyLoading] = useState(false);
+
 
   // Profile form fields
   const [regName, setRegName] = useState('');
@@ -131,6 +136,15 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
       if (result.status === 'complete') {
         await setSignInActive({ session: result.createdSessionId });
 
+        // Retrieve verified Clerk User ID for this doctor session (never use session ID)
+        const activeSession = clerk.client?.sessions?.find(s => s.id === result.createdSessionId);
+        const verifiedDoctorUserId =
+          (result as any).createdUserId ||
+          activeSession?.user?.id ||
+          clerk.user?.id ||
+          user?.id ||
+          '';
+
         // Get Clerk token and look up doctor profile
         try {
           let token = '';
@@ -143,7 +157,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
             headers: {
               'Content-Type': 'application/json',
               ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-              'x-user-id': (result as any).createdUserId || user?.id || '',
+              ...(verifiedDoctorUserId ? { 'x-user-id': verifiedDoctorUserId } : {}),
               'x-user-role': 'doctor',
             },
             body: JSON.stringify({ email: loginEmail.trim() }),
@@ -178,7 +192,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
     e.preventDefault();
     setRegClerkError('');
     if (!regEmail.trim() || !regEmail.includes('@')) { setRegClerkError('Valid email is required.'); return; }
-    if (regPassword.length < 8) { setRegClerkError('Password must be at least 8 characters.'); return; }
+    if (regPassword.length < 15) { setRegClerkError('Password must be at least 15 characters.'); return; }
     if (!signUpLoaded || !signUp) { setRegClerkError('Auth service is initializing…'); return; }
 
     setRegClerkLoading(true);
@@ -200,11 +214,23 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
       }
     } catch (err: any) {
       const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || 'Sign-up failed.';
-      setRegClerkError(msg);
+      const isDuplicate =
+        msg.toLowerCase().includes('taken') ||
+        msg.toLowerCase().includes('already') ||
+        err?.errors?.[0]?.code === 'form_identifier_exists';
+
+      if (isDuplicate) {
+        setRegDuplicateEmail(true);
+        setRegClerkError('That email address is already registered in our authentication system.');
+      } else {
+        setRegDuplicateEmail(false);
+        setRegClerkError(msg);
+      }
     } finally {
       setRegClerkLoading(false);
     }
   };
+
 
   // ── Existing Clerk account sign-in during registration ───────────────────────
   const handleClerkSignInForReg = async (e: React.FormEvent) => {
@@ -542,11 +568,67 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
                     <p className="text-xs text-slate-500">Create a Clerk account or sign in to link your doctor profile.</p>
 
                     {regClerkError && (
-                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>{regClerkError}</span>
+                      <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+                          <span>{regClerkError}</span>
+                        </div>
+
+                        {regDuplicateEmail && (
+                          <div className="pt-2 border-t border-rose-200 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLoginEmail(regEmail);
+                                setActiveTab('login');
+                                setRegClerkError('');
+                                setRegDuplicateEmail(false);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-[#032F31] text-white font-bold text-xs hover:bg-teal-900 transition-colors cursor-pointer"
+                            >
+                              Sign In Instead
+                            </button>
+                            <button
+                              type="button"
+                              disabled={regReconciling}
+                              onClick={async () => {
+                                setRegReconciling(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/auth/reconcile-deleted-account`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ email: regEmail.trim() })
+                                  });
+                                  const data = await res.json();
+                                  if (res.ok && data.success) {
+                                    setRegSuccessNotice('Authentication record released! You can now create your doctor account.');
+                                    setRegClerkError('');
+                                    setRegDuplicateEmail(false);
+                                  } else {
+                                    setRegClerkError(data.error || 'Could not release email. Please sign in or contact admin.');
+                                  }
+                                } catch (e: any) {
+                                  setRegClerkError(e.message || 'Network error during reconciliation.');
+                                } finally {
+                                  setRegReconciling(false);
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-xl border border-rose-300 text-rose-900 font-bold text-xs hover:bg-rose-100 transition-colors cursor-pointer"
+                            >
+                              {regReconciling ? 'Reconciling...' : 'Account Was Deleted? Release Email'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
+
+                    {regSuccessNotice && (
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+                        <span>{regSuccessNotice}</span>
+                      </div>
+                    )}
+
 
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Email Address</label>
@@ -561,12 +643,12 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Password (min. 8 characters)</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Password (min. 15 characters)</label>
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                        <input type={showRegPw ? 'text' : 'password'} required value={regPassword}
+                        <input type={showRegPw ? 'text' : 'password'} required minLength={15} value={regPassword}
                           onChange={(e) => setRegPassword(e.target.value)}
-                          placeholder="Create a strong password"
+                          placeholder="Create a strong password (min 15 chars)"
                           className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:border-teal-700 bg-slate-50/50"
                         />
                         <button type="button" onClick={() => setShowRegPw(!showRegPw)}

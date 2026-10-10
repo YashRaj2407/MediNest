@@ -119,10 +119,16 @@ export async function createAppointment(
 
 /**
  * Fetches all appointments for the logged-in patient from Express REST API.
+ * Uses authenticated identity (Authorization Bearer token / verified user ID).
+ * Never passes or queries by email to prevent cross-account consultation leaks.
  */
-export async function fetchPatientAppointments(): Promise<Appointment[]> {
+export async function fetchPatientAppointments(patientId?: string, token?: string): Promise<Appointment[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/appointments/patient`);
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (patientId) headers['x-user-id'] = patientId;
+
+    const res = await fetch(`${API_BASE_URL}/appointments/patient`, { headers });
     if (res.ok) {
       const body = await res.json();
       if (body.success && Array.isArray(body.data)) {
@@ -152,37 +158,78 @@ export async function fetchDoctorAppointments(doctorId: string): Promise<Appoint
 }
 
 /**
- * Cancels an appointment via Express REST API.
+ * Cancels an appointment via Express REST API with caller authorization.
  */
-export async function cancelAppointmentInDB(id: string, reason?: string): Promise<void> {
+export async function cancelAppointmentInDB(
+  id: string,
+  reason?: string,
+  token?: string,
+  userId?: string
+): Promise<void> {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (userId) headers['x-user-id'] = userId;
+
     await fetch(`${API_BASE_URL}/appointments/${id}/cancel`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ reason }),
     });
   } catch (_err) {}
 }
 
 /**
- * Reschedules an appointment via Express REST API.
+ * Reschedules an appointment via Express REST API with caller authorization.
  */
 export async function rescheduleAppointmentInDB(
   id: string,
   newDate: string,
-  newTimeSlot: string
+  newTimeSlot: string,
+  token?: string,
+  userId?: string
 ): Promise<void> {
   const dateObj = resolveDate(newDate);
   const { h, m } = parseTime(newTimeSlot);
   dateObj.setHours(h, m, 0, 0);
 
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (userId) headers['x-user-id'] = userId;
+
     await fetch(`${API_BASE_URL}/appointments/${id}/reschedule`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ startDatetime: dateObj.toISOString() }),
     });
   } catch (_err) {}
+}
+
+/**
+ * Marks an appointment as completed via Express REST API with doctor authorization.
+ */
+export async function completeAppointmentInDB(
+  id: string,
+  token?: string,
+  doctorUserId?: string
+): Promise<{ success: boolean; message?: string; data?: Appointment }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (doctorUserId) {
+    headers['x-user-id'] = doctorUserId;
+    headers['x-user-role'] = 'doctor';
+  }
+
+  const res = await fetch(`${API_BASE_URL}/appointments/${encodeURIComponent(id)}/complete`, {
+    method: 'PATCH',
+    headers,
+  });
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    throw new Error(body?.error || 'Failed to complete appointment');
+  }
+  return body;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -16,10 +16,16 @@ import {
   User, 
   Phone, 
   Mail,
-  ShieldCheck
+  ShieldCheck,
+  FileText,
+  RefreshCw,
+  Flag
 } from 'lucide-react';
 import { Appointment, Doctor, UserProfile } from '../types';
 import { DoctorAvatar } from './DoctorAvatar';
+import { generatePrescriptionPDF, getEffectivePrescription } from '../lib/prescriptions';
+import { ReportDoctorModal } from './ReportDoctorModal';
+
 
 interface UserDashboardModalProps {
   isOpen: boolean;
@@ -32,6 +38,7 @@ interface UserDashboardModalProps {
   onViewReceipt: (appointment: Appointment) => void;
   onBookDoctorAgain: (doctor: Doctor) => void;
   onLogout: () => void;
+  onRefreshAppointments?: () => void;
 }
 
 export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
@@ -44,7 +51,8 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
   onRescheduleAppointment,
   onViewReceipt,
   onBookDoctorAgain,
-  onLogout
+  onLogout,
+  onRefreshAppointments
 }) => {
   if (!isOpen) return null;
 
@@ -53,9 +61,31 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
   const [rescheduleDate, setRescheduleDate] = useState('Tomorrow, Sep 12');
   const [rescheduleSlot, setRescheduleSlot] = useState('11:00 AM');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [viewRxAppt, setViewRxAppt] = useState<Appointment | null>(null);
+  const [reportAppt, setReportAppt] = useState<Appointment | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const upcomingAppointments = appointments.filter(a => a.status === 'upcoming');
-  const pastAppointments = appointments.filter(a => a.status === 'completed' || a.status === 'cancelled');
+
+  // Deduplicate appointments by unique ID to prevent duplicates when dashboard reloads
+  const uniqueAppointments = React.useMemo(() => {
+    const seen = new Set<string>();
+    return appointments.filter(a => {
+      if (!a.id || seen.has(a.id)) return false;
+      seen.add(a.id);
+      return true;
+    });
+  }, [appointments]);
+
+  // Upcoming: all non-terminal appointments (upcoming, pending, confirmed, rescheduled, RESCHEDULE_REQUIRED)
+  // Strictly excludes 'completed' and 'cancelled'
+  const upcomingAppointments = uniqueAppointments.filter(
+    a => a.status !== 'completed' && a.status !== 'cancelled'
+  );
+
+  // Past Consultations: completed and terminal records
+  const pastAppointments = uniqueAppointments.filter(
+    a => a.status === 'completed' || a.status === 'cancelled'
+  );
 
   const handleConfirmReschedule = (id: string) => {
     onRescheduleAppointment(id, rescheduleDate, rescheduleSlot);
@@ -117,57 +147,75 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="px-6 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center gap-6 text-xs font-bold">
-          <button
-            onClick={() => setActiveTab('upcoming')}
-            className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'upcoming'
-                ? 'border-[#0C182B] text-[#0C182B]'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            Upcoming Appointments
-            <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
-              {upcomingAppointments.length}
-            </span>
-          </button>
+        <div className="px-6 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-4 text-xs font-bold">
+          <div className="flex flex-wrap items-center gap-6">
+            <button
+              onClick={() => setActiveTab('upcoming')}
+              className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'upcoming'
+                  ? 'border-[#0C182B] text-[#0C182B]'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Upcoming Appointments
+              <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
+                {upcomingAppointments.length}
+              </span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('past')}
-            className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'past'
-                ? 'border-[#0C182B] text-[#0C182B]'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            Past Consultations ({pastAppointments.length})
-          </button>
+            <button
+              onClick={() => setActiveTab('past')}
+              className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'past'
+                  ? 'border-[#0C182B] text-[#0C182B]'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              Past Consultations ({pastAppointments.length})
+            </button>
 
-          <button
-            onClick={() => setActiveTab('payments')}
-            className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'payments'
-                ? 'border-[#0C182B] text-[#0C182B]'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <CreditCard className="w-3.5 h-3.5" />
-            Payment History & Invoices
-          </button>
+            <button
+              onClick={() => setActiveTab('payments')}
+              className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'payments'
+                  ? 'border-[#0C182B] text-[#0C182B]'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              Payment History & Invoices
+            </button>
 
-          <button
-            onClick={() => setActiveTab('saved')}
-            className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'saved'
-                ? 'border-[#0C182B] text-[#0C182B]'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <Star className="w-3.5 h-3.5" />
-            Saved Doctors ({savedDoctors.length})
-          </button>
+            <button
+              onClick={() => setActiveTab('saved')}
+              className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'saved'
+                  ? 'border-[#0C182B] text-[#0C182B]'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Star className="w-3.5 h-3.5" />
+              Saved Doctors ({savedDoctors.length})
+            </button>
+          </div>
+
+          {onRefreshAppointments && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsRefreshing(true);
+                onRefreshAppointments();
+                setTimeout(() => setIsRefreshing(false), 800);
+              }}
+              className="py-1.5 px-3 my-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+              title="Sync latest appointments & prescriptions"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-teal-700 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Syncing...' : 'Refresh Status'}</span>
+            </button>
+          )}
         </div>
 
         {/* Notice Alert */}
@@ -353,14 +401,25 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                             </button>
                           </div>
 
-                          <button
-                            onClick={() => onViewReceipt(appt)}
-                            className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1"
-                          >
-                            <Download className="w-3 h-3" /> Download Receipt
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReportAppt(appt)}
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 hover:border-rose-200 text-xs font-semibold text-slate-500 hover:text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Report Issue with Doctor"
+                            >
+                              <Flag className="w-3 h-3" /> Report
+                            </button>
+                            <button
+                              onClick={() => onViewReceipt(appt)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-3 h-3" /> Download Receipt
+                            </button>
+                          </div>
                         </div>
                       )}
+
                     </div>
                   );
                 })
@@ -403,27 +462,63 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                         <div className="text-xs font-bold text-slate-900">{appt.doctorName}</div>
                         <div className="text-[11px] text-slate-500">{appt.doctorSpecialty} • {appt.date}</div>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                          appt.status === 'cancelled' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
+                          appt.status === 'completed'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : appt.status === 'cancelled'
+                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                            : 'bg-slate-200 text-slate-700'
                         }`}>
                           {appt.status.toUpperCase()}
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(appt.status === 'completed' || appt.prescription) && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setViewRxAppt(appt)}
+                            className="px-3 py-1.5 rounded-lg bg-[#0C182B] text-[#FAE58D] hover:bg-[#152B4D] text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-[#FAE58D]" /> View Digital Rx
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => generatePrescriptionPDF(appt, getEffectivePrescription(appt))}
+                            className="px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 hover:bg-teal-100 text-xs font-bold text-teal-900 flex items-center gap-1.5 cursor-pointer transition-all"
+                          >
+                            <Download className="w-3.5 h-3.5 text-teal-700" /> PDF
+                          </button>
+                        </>
+                      )}
                       <button
+                        type="button"
                         onClick={() => onViewReceipt(appt)}
-                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700"
+                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                       >
                         Receipt (₹{appt.totalINR})
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setReportAppt(appt)}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 hover:border-rose-200 text-xs font-semibold text-slate-500 hover:text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Report Issue with Doctor"
+                      >
+                        <Flag className="w-3 h-3" /> Report
+                      </button>
                     </div>
                   </div>
+
                 ))
               ) : (
-                <p className="text-xs text-slate-500 text-center py-8">
-                  No past consultation history recorded.
-                </p>
+                <div className="p-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <Clock className="w-8 h-8 text-slate-400 mx-auto" />
+                  <h4 className="text-sm font-bold text-slate-800">No Past Consultations</h4>
+                  <p className="text-xs text-slate-500">
+                    You have no past consultation history on record for this account.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -515,6 +610,139 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Patient Digital Prescription View Modal */}
+      {viewRxAppt && (() => {
+        const activeRx = getEffectivePrescription(viewRxAppt);
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+            <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden my-6">
+              {/* Modal Header */}
+              <div className="bg-[#032F31] text-white p-6 relative flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-[#FAE58D] text-[#032F31] flex items-center justify-center font-bold text-lg shadow-sm">
+                    Rx
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Digital Medical Prescription</h3>
+                    <p className="text-xs text-teal-200">Official NMC-Compliant Tele-Consultation Record</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewRxAppt(null)}
+                  className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Prescription Content Body */}
+              <div className="p-6 sm:p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+                {/* Doctor Details */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+                  <div>
+                    <h4 className="text-base font-bold text-[#032F31]">{viewRxAppt.doctorName}</h4>
+                    <p className="text-xs text-teal-700 font-semibold">{viewRxAppt.doctorSpecialty}</p>
+                    <p className="text-xs text-slate-500">{viewRxAppt.clinicName} • {viewRxAppt.clinicAddress}</p>
+                  </div>
+                  <div className="text-right text-xs space-y-0.5">
+                    <div className="font-mono font-bold text-slate-700">Rx ID: {activeRx.id}</div>
+                    <div className="text-slate-500">Issued Date: {activeRx.issuedAt || viewRxAppt.date}</div>
+                  </div>
+                </div>
+
+                {/* Diagnosis Box */}
+                <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-teal-800">Clinical Diagnosis</span>
+                  <p className="text-sm font-bold text-[#032F31]">{activeRx.diagnosis}</p>
+                </div>
+
+                {/* Prescribed Medicines Table */}
+                <div className="space-y-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+                    Prescribed Medication ({activeRx.medicines?.length || 0})
+                  </span>
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-[#032F31] text-[#FAE58D] font-bold text-[11px]">
+                        <tr>
+                          <th className="p-3">#</th>
+                          <th className="p-3">Medicine Name</th>
+                          <th className="p-3">Dosage</th>
+                          <th className="p-3">Timing &amp; Frequency</th>
+                          <th className="p-3 text-right">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-slate-50/50">
+                        {(activeRx.medicines || []).map((med, idx) => (
+                          <tr key={idx} className="hover:bg-slate-100/60">
+                            <td className="p-3 font-bold text-slate-400">{idx + 1}</td>
+                            <td className="p-3 font-bold text-slate-900">{med.name}</td>
+                            <td className="p-3 text-slate-700 font-medium">{med.dosage}</td>
+                            <td className="p-3 text-slate-700">{med.timing}</td>
+                            <td className="p-3 text-right font-semibold text-teal-800">{med.duration}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Doctor's Advice & Instructions */}
+                {activeRx.advice && (
+                  <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Doctor's Advice &amp; Instructions</span>
+                    <p className="text-xs text-amber-950 font-medium leading-relaxed">{activeRx.advice}</p>
+                  </div>
+                )}
+
+                {/* Follow-Up Date */}
+                {activeRx.followUpDate && (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-600">Recommended Follow-Up Date:</span>
+                    <span className="font-bold text-[#032F31]">{activeRx.followUpDate}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 sm:p-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setViewRxAppt(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generatePrescriptionPDF(viewRxAppt, activeRx)}
+                  className="px-5 py-2 rounded-xl bg-[#032F31] hover:bg-[#07474a] text-[#FAE58D] text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md"
+                >
+                  <Download className="w-4 h-4 text-[#FAE58D]" /> Download PDF Prescription
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Report Doctor Modal */}
+      {reportAppt && (
+        <ReportDoctorModal
+          isOpen={!!reportAppt}
+          onClose={() => setReportAppt(null)}
+          doctor={{
+            id: reportAppt.doctorId,
+            name: reportAppt.doctorName,
+            specialty: reportAppt.doctorSpecialty
+          }}
+          appointmentId={reportAppt.id}
+          patientUserId={user.id}
+        />
+      )}
     </div>
   );
 };
+

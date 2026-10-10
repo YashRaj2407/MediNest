@@ -62,17 +62,27 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
     setTimeout(() => setActionFeedback(null), 4500);
   };
 
+  const isApptToday = (dateStr: string) => {
+    if (!dateStr) return false;
+    const dLower = dateStr.toLowerCase();
+    if (dLower.includes('today')) return true;
+    const now = new Date();
+    const nowDayStr = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).toLowerCase();
+    const nowDayStr2 = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase();
+    return dLower.includes(nowDayStr) || dLower.includes(nowDayStr2);
+  };
+
   // Filter appointments
   const filteredAppointments = appointments.filter(appt => {
     // 1. Tab check
     if (activeTab === 'today') {
       if (appt.status === 'cancelled') return false;
-      const isToday = (appt.date || '').toLowerCase().includes('today') || (appt.date || '').toLowerCase().includes('sep 11');
+      const isToday = isApptToday(appt.date);
       if (!isToday && appt.status !== 'upcoming') return false;
       if (!isToday) return false;
     } else if (activeTab === 'upcoming') {
       if (appt.status !== 'upcoming') return false;
-      const isToday = (appt.date || '').toLowerCase().includes('today') || (appt.date || '').toLowerCase().includes('sep 11');
+      const isToday = isApptToday(appt.date);
       if (isToday) return false;
     } else if (activeTab === 'completed') {
       if (appt.status !== 'completed') return false;
@@ -152,7 +162,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Today ({appointments.filter(a => ((a.date || '').toLowerCase().includes('today') || (a.date || '').toLowerCase().includes('sep 11')) && a.status !== 'cancelled').length})
+              Today ({appointments.filter(a => isApptToday(a.date) && a.status !== 'cancelled').length})
             </button>
             <button
               type="button"
@@ -163,7 +173,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Upcoming ({appointments.filter(a => a.status === 'upcoming' && !(a.date || '').toLowerCase().includes('today') && !(a.date || '').toLowerCase().includes('sep 11')).length})
+              Upcoming ({appointments.filter(a => a.status === 'upcoming' && !isApptToday(a.date)).length})
             </button>
             <button
               type="button"
@@ -378,7 +388,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-teal-200 bg-teal-50/60 hover:bg-teal-100 text-teal-800 text-xs font-semibold transition-colors cursor-pointer"
                     >
                       <FileText className="w-3.5 h-3.5 text-teal-700" />
-                      {appt.prescription ? 'View e-Prescription (Rx)' : 'Upload / Issue Rx'}
+                      {appt.prescription ? 'View Digital Prescription' : 'Issue Digital Prescription'}
                     </button>
                   </div>
 
