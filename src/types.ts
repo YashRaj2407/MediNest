@@ -1,4 +1,4 @@
-﻿export type ConsultationType = 'video' | 'clinic';
+export type ConsultationType = 'video' | 'clinic';
 
 export interface DoctorReview {
   id: string;
@@ -38,6 +38,7 @@ export interface Doctor {
   services: DoctorService[];
   reviews: DoctorReview[];
   availableToday: boolean;
+  acceptingNewAppointments?: boolean;
 }
 
 export interface Specialty {

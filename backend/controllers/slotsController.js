@@ -58,6 +58,15 @@ export async function getSlots(req, res) {
 
     const weekday = targetDate.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
 
+    // 0. Check doctor accepting_appointments status
+    const [docProfiles] = await pool.query(
+      `SELECT id, name, accepting_appointments FROM doctor_profiles WHERE id = ?`,
+      [doctorId]
+    );
+    const isAccepting = docProfiles.length > 0
+      ? Boolean(docProfiles[0].accepting_appointments)
+      : true;
+
     // 1. Fetch doctor availability rules for this weekday
     const [rules] = await pool.query(
       `SELECT * FROM doctor_availability_rules WHERE doctor_id = ? AND weekday = ?`,
@@ -94,6 +103,21 @@ export async function getSlots(req, res) {
         startISO: slotStart.toISOString(),
         endISO: slotEnd.toISOString(),
         status: 'available',
+      });
+    }
+
+    // If doctor has paused new appointments, block ALL slots immediately
+    if (!isAccepting) {
+      for (const slot of slots) {
+        slot.status = 'blocked';
+        slot.label = 'Appointments Paused';
+      }
+      return res.json({
+        success: true,
+        count: slots.length,
+        data: slots,
+        acceptingAppointments: false,
+        message: 'Doctor has paused new appointments. All booking slots are blocked.'
       });
     }
 

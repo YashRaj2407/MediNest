@@ -38,7 +38,8 @@ function parseTime(timeStr: string): { h: number; m: number } {
 export async function generateSlots(
   doctorId: string,
   dateStr: string, // "Today", "Tomorrow", or "YYYY-MM-DD"
-  existingAppointments: Appointment[] = []
+  existingAppointments: Appointment[] = [],
+  acceptingAppointments: boolean = true
 ): Promise<TimeSlot[]> {
 
   // Resolve date to a real Date object (IST)
@@ -90,6 +91,14 @@ export async function generateSlots(
       timeEnd: formatIST(slotEnd),
       status: 'available',
     });
+  }
+
+  if (acceptingAppointments === false) {
+    for (const slot of slots) {
+      slot.status = 'blocked';
+      slot.label = 'Appointments Paused';
+    }
+    return slots;
   }
 
   const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));

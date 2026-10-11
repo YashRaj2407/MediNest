@@ -95,6 +95,7 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
   // Edit break form state
   const [showEditBreakModal, setShowEditBreakModal] = useState(false);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editingBlockDate, setEditingBlockDate] = useState<string>(''); // 'YYYY-MM-DD' of the block being edited
   const [editBreakStart, setEditBreakStart] = useState('02:00 PM');
   const [editBreakEnd, setEditBreakEnd] = useState('03:00 PM');
   const [editBreakLabel, setEditBreakLabel] = useState('Doctor Break');
@@ -143,6 +144,24 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
     if (found) return found.dateObj;
     const now = new Date();
     return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+  };
+
+  /** Returns 'YYYY-MM-DD' for the currently selected day tab */
+  const getSelectedDateStr = (): string => {
+    const d = getSelectedDateObj();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  /** True when a DB block overlaps the selected day */
+  const blockIsOnSelectedDay = (b: { start_datetime: string; end_datetime: string }): boolean => {
+    const dateStr = getSelectedDateStr();
+    // start_datetime in MySQL format: '2026-10-11 15:00:00' or ISO '2026-10-11T15:00:00.000Z'
+    const bStart = b.start_datetime.slice(0, 10); // 'YYYY-MM-DD'
+    const bEnd   = b.end_datetime.slice(0, 10);
+    return bStart <= dateStr && bEnd >= dateStr;
   };
 
   const parseSlotToISO = (timeStr: string): string => {
@@ -390,18 +409,35 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
 
   const handleOpenEditBreak = (block: { id: string; start_datetime: string; end_datetime: string; reason: string }) => {
     setEditingBlockId(block.id);
+    // Capture the block's actual date ('YYYY-MM-DD') so the edit doesn't change the day
+    setEditingBlockDate(block.start_datetime.slice(0, 10));
     setEditBreakStart(formatBlockTime(block.start_datetime));
     setEditBreakEnd(formatBlockTime(block.end_datetime));
     setEditBreakLabel(block.reason || 'Doctor Break');
     setShowEditBreakModal(true);
   };
 
+  /** Parse a time string like '03:00 PM' on a specific date string 'YYYY-MM-DD' → ISO string */
+  const parseSlotToISOForDate = (timeStr: string, dateStr: string): string => {
+    const [time, period] = timeStr.trim().split(' ');
+    const [hStr, mStr] = (time || '09:00').split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (period === 'PM' && h !== 12) h += 12;
+    if (period === 'AM' && h === 12) h = 0;
+    const d = new Date(dateStr); // local midnight on that date
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+
   const handleExecuteUpdateBreak = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingBlockId) return;
 
-    const startISO = parseSlotToISO(editBreakStart);
-    const endISO = parseSlotToISO(editBreakEnd);
+    // Use the block's original date, NOT the currently selected tab date
+    const dateStr = editingBlockDate || getSelectedDateStr();
+    const startISO = parseSlotToISOForDate(editBreakStart, dateStr);
+    const endISO   = parseSlotToISOForDate(editBreakEnd, dateStr);
 
     try {
       const res = await fetch(`${API_BASE_URL}/slots/blocks/${editingBlockId}`, {
@@ -426,6 +462,7 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
     } finally {
       setShowEditBreakModal(false);
       setEditingBlockId(null);
+      setEditingBlockDate('');
     }
   };
 
@@ -623,21 +660,24 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
           </div>
         </div>
 
-        {/* Active Breaks */}
+        {/* Active Breaks — filtered to selected day */}
         <div className="p-4 rounded-2xl bg-[#FAF7EE] border border-[#DDD6C5] space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-[#032F31] flex items-center gap-1.5">
               <Coffee className="w-4 h-4 text-amber-700" /> Active Doctor Breaks
+              <span className="ml-1 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-md">
+                {selectedDayTab}
+              </span>
             </span>
             <span className="text-[11px] text-slate-600 font-semibold">
-              {dbBlocks.filter(b => b.type === 'break').length} Break(s) Configured
+              {dbBlocks.filter(b => b.type === 'break' && blockIsOnSelectedDay(b)).length} Break(s) for {selectedDayTab}
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-            {dbBlocks.filter(b => b.type === 'break').length === 0 ? (
-              <p className="text-xs text-slate-400 py-1">No breaks scheduled for this period.</p>
+            {dbBlocks.filter(b => b.type === 'break' && blockIsOnSelectedDay(b)).length === 0 ? (
+              <p className="text-xs text-slate-400 py-1">No breaks scheduled for {selectedDayTab}.</p>
             ) : (
-              dbBlocks.filter(b => b.type === 'break').map(brk => (
+              dbBlocks.filter(b => b.type === 'break' && blockIsOnSelectedDay(b)).map(brk => (
                 <div key={brk.id} className="p-3 rounded-xl bg-white border border-[#DDD6C5] flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-[#032F31]">
@@ -669,19 +709,22 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
           </div>
         </div>
 
-        {/* Active Leaves & Vacations */}
-        {dbBlocks.filter(b => b.type === 'leave').length > 0 && (
+        {/* Active Leaves & Vacations — filtered to selected day */}
+        {dbBlocks.filter(b => b.type === 'leave' && blockIsOnSelectedDay(b)).length > 0 && (
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-rose-950 flex items-center gap-1.5">
                 <CalendarRange className="w-4 h-4 text-rose-700" /> Active Leaves &amp; Vacations
+                <span className="ml-1 text-[10px] font-semibold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-md">
+                  {selectedDayTab}
+                </span>
               </span>
               <span className="text-[11px] text-rose-800 font-semibold">
-                {dbBlocks.filter(b => b.type === 'leave').length} Leave(s) Active
+                {dbBlocks.filter(b => b.type === 'leave' && blockIsOnSelectedDay(b)).length} Leave(s) Active
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              {dbBlocks.filter(b => b.type === 'leave').map(lv => (
+              {dbBlocks.filter(b => b.type === 'leave' && blockIsOnSelectedDay(b)).map(lv => (
                 <div key={lv.id} className="p-3 rounded-xl bg-white border border-rose-200 flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-rose-900">
@@ -700,6 +743,7 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
                 </div>
               ))}
             </div>
+
           </div>
         )}
       </div>

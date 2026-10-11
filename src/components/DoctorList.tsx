@@ -27,8 +27,69 @@ interface DoctorListProps {
   onCityChange: (city: string) => void;
   consultationTypeFilter: 'all' | ConsultationType;
   onConsultationTypeChange: (mode: 'all' | ConsultationType) => void;
+  searchTerm?: string;
+  onSearchChange?: (term: string) => void;
   onViewProfile: (doctor: Doctor) => void;
   onBookAppointment: (doctor: Doctor) => void;
+}
+
+function matchesDoctorSpecialty(doc: Doctor, targetSpecialty: string): boolean {
+  if (!targetSpecialty || targetSpecialty === 'all') return true;
+
+  const target = targetSpecialty.toLowerCase().trim();
+  const targetNorm = target.replace(/[^a-z0-9]/g, '');
+
+  const docSpecId = (doc.specialtyId || '').toLowerCase().trim();
+  const docSpecIdNorm = docSpecId.replace(/[^a-z0-9]/g, '');
+
+  const docSpecName = (doc.specialty || '').toLowerCase().trim();
+  const docSpecNameNorm = docSpecName.replace(/[^a-z0-9]/g, '');
+
+  if (docSpecId === target || docSpecName === target) return true;
+  if (docSpecIdNorm === targetNorm || docSpecNameNorm === targetNorm) return true;
+
+  if (target === 'ent' && docSpecName.includes('ent')) return true;
+  if (docSpecId === 'ent' && target.includes('ent')) return true;
+
+  if (docSpecName.includes(target) || target.includes(docSpecId)) return true;
+
+  return false;
+}
+
+function matchesDoctorSearch(doc: Doctor, query: string): boolean {
+  if (!query || !query.trim()) return true;
+  const q = query.trim().toLowerCase();
+
+  if (matchesDoctorSpecialty(doc, q)) return true;
+
+  const name = (doc.name || '').toLowerCase();
+  const clinic = (doc.clinicName || '').toLowerCase();
+  const city = (doc.city || '').toLowerCase();
+  const address = (doc.address || '').toLowerCase();
+  const about = (doc.about || '').toLowerCase();
+  const quals = (doc.qualifications || '').toLowerCase();
+  const langs = (doc.languages || []).map(l => l.toLowerCase());
+  const services = (doc.services || []).map((s: any) => (s.name || '').toLowerCase());
+
+  if (name.includes(q)) return true;
+  if (clinic.includes(q)) return true;
+  if (city.includes(q)) return true;
+  if (address.includes(q)) return true;
+  if (about.includes(q)) return true;
+  if (quals.includes(q)) return true;
+  if (langs.some(l => l.includes(q))) return true;
+  if (services.some(s => s.includes(q))) return true;
+
+  if ((q.includes('heart') || q.includes('cardio') || q.includes('chest')) && doc.specialtyId === 'cardiologist') return true;
+  if ((q.includes('skin') || q.includes('acne') || q.includes('hair') || q.includes('derma')) && doc.specialtyId === 'dermatologist') return true;
+  if ((q.includes('women') || q.includes('period') || q.includes('pcos') || q.includes('pregnancy') || q.includes('gynec')) && doc.specialtyId === 'gynecologist') return true;
+  if ((q.includes('child') || q.includes('baby') || q.includes('pediatric')) && doc.specialtyId === 'pediatrician') return true;
+  if ((q.includes('bone') || q.includes('joint') || q.includes('ortho') || q.includes('knee')) && doc.specialtyId === 'orthopedic') return true;
+  if ((q.includes('mind') || q.includes('mental') || q.includes('psych') || q.includes('depression') || q.includes('anxiety')) && doc.specialtyId === 'psychiatrist') return true;
+  if ((q.includes('ear') || q.includes('nose') || q.includes('throat') || q.includes('ent')) && doc.specialtyId === 'ent') return true;
+  if ((q.includes('fever') || q.includes('cough') || q.includes('cold') || q.includes('general')) && doc.specialtyId === 'general-physician') return true;
+
+  return false;
 }
 
 export const DoctorList: React.FC<DoctorListProps> = ({
@@ -39,10 +100,12 @@ export const DoctorList: React.FC<DoctorListProps> = ({
   onCityChange,
   consultationTypeFilter,
   onConsultationTypeChange,
+  searchTerm,
+  onSearchChange,
   onViewProfile,
   onBookAppointment
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [internalSearchQuery, setInternalSearchQuery] = useState(searchTerm || '');
   const [selectedLanguage, setSelectedLanguage] = useState('all');
   const [selectedGender, setSelectedGender] = useState<'all' | 'male' | 'female'>('all');
   const [selectedExperience, setSelectedExperience] = useState<number>(0);
@@ -51,6 +114,22 @@ export const DoctorList: React.FC<DoctorListProps> = ({
   const [sortBy, setSortBy] = useState<'recommended' | 'rating' | 'fee-asc' | 'fee-desc' | 'experience'>('recommended');
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
+  // Keep internal search synchronized with parent searchTerm (e.g. from Hero or clear)
+  useEffect(() => {
+    if (searchTerm !== undefined) {
+      setInternalSearchQuery(searchTerm);
+    }
+  }, [searchTerm]);
+
+  const handleSearchChange = (val: string) => {
+    setInternalSearchQuery(val);
+    if (onSearchChange) {
+      onSearchChange(val);
+    }
+  };
+
+  const activeSearchQuery = (searchTerm !== undefined ? searchTerm : internalSearchQuery).trim();
+
   // Available languages from data
   const allLanguages = useMemo(() => {
     const set = new Set<string>();
@@ -58,46 +137,101 @@ export const DoctorList: React.FC<DoctorListProps> = ({
     return Array.from(set);
   }, [doctors]);
 
-  // Whether any active search/filter is applied
-  const isSearchActive = searchQuery.trim() !== '' || selectedSpecialty !== 'all' || selectedCity !== 'All Cities' || consultationTypeFilter !== 'all' || selectedLanguage !== 'all' || selectedGender !== 'all' || selectedExperience > 0 || availableTodayOnly || maxFeeINR < 2000;
-
-  // For API-backed search results
-  const [searchResults, setSearchResults] = useState<import('../types').Doctor[]>([]);
+  // Background fetch to augment doctor pool if needed
+  const [extraDoctors, setExtraDoctors] = useState<Doctor[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  const runSearch = useCallback(async () => {
-    if (!isSearchActive) { setSearchResults([]); return; }
-    setSearchLoading(true);
-    try {
-      const results = await fetchDoctors({
-        search: searchQuery.trim() || undefined,
-        specialty: selectedSpecialty !== 'all' ? selectedSpecialty : undefined,
-        city: selectedCity !== 'All Cities' ? selectedCity : undefined,
-        consultationType: consultationTypeFilter !== 'all' ? consultationTypeFilter : undefined,
-      });
-      setSearchResults(results);
-    } catch (_) {
-      setSearchResults([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [isSearchActive, searchQuery, selectedSpecialty, selectedCity, consultationTypeFilter]);
-
   useEffect(() => {
-    const timer = setTimeout(runSearch, 350);
-    return () => clearTimeout(timer);
-  }, [runSearch]);
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        const results = await fetchDoctors({
+          search: activeSearchQuery || undefined,
+          specialty: selectedSpecialty !== 'all' ? selectedSpecialty : undefined,
+          city: selectedCity !== 'All Cities' ? selectedCity : undefined,
+          consultationType: consultationTypeFilter !== 'all' ? consultationTypeFilter : undefined,
+        });
+        if (!cancelled && Array.isArray(results) && results.length > 0) {
+          setExtraDoctors(results);
+        }
+      } catch (_) {
+      } finally {
+        if (!cancelled) setSearchLoading(false);
+      }
+    }, 300);
 
-  // When search is inactive: show featured doctors (passed-in props).
-  // When search is active: use API results, then apply client-side filters that API doesn't handle.
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeSearchQuery, selectedSpecialty, selectedCity, consultationTypeFilter]);
+
+  // Combined candidate pool: deduplicate doctors and any newly fetched records by ID
   const filteredDoctors = useMemo(() => {
-    const base = isSearchActive ? searchResults : doctors.filter(d => d.isFeatured !== false);
-    return base.filter(doc => {
-      if (selectedLanguage !== 'all' && !doc.languages.includes(selectedLanguage)) return false;
-      if (selectedGender !== 'all' && doc.gender !== selectedGender) return false;
-      if (doc.experienceYears < selectedExperience) return false;
-      if (availableTodayOnly && !doc.availableToday) return false;
-      if (doc.feeINR > maxFeeINR) return false;
+    const doctorMap = new Map<string, Doctor>();
+    doctors.forEach(d => doctorMap.set(d.id, d));
+    extraDoctors.forEach(d => doctorMap.set(d.id, d));
+    const allCandidates = Array.from(doctorMap.values());
+
+    return allCandidates.filter(doc => {
+      // 1. Specialty Filter (Strictly enforced)
+      if (!matchesDoctorSpecialty(doc, selectedSpecialty)) {
+        return false;
+      }
+
+      // 2. City Filter
+      if (selectedCity && selectedCity !== 'All Cities') {
+        const targetCity = selectedCity.toLowerCase().trim();
+        const docCity = (doc.city || '').toLowerCase().trim();
+        const docAddress = (doc.address || '').toLowerCase().trim();
+        const matchesCity =
+          docCity === targetCity ||
+          docCity === 'all cities' ||
+          docCity.includes(targetCity) ||
+          docAddress.includes(targetCity);
+        if (!matchesCity) return false;
+      }
+
+      // 3. Consultation Mode Filter
+      if (consultationTypeFilter && consultationTypeFilter !== 'all') {
+        const modes = doc.consultationModes || [];
+        if (!modes.includes(consultationTypeFilter)) {
+          return false;
+        }
+      }
+
+      // 4. Search Query / Term Filter (Strictly enforced)
+      if (!matchesDoctorSearch(doc, activeSearchQuery)) {
+        return false;
+      }
+
+      // 5. Language Filter
+      if (selectedLanguage !== 'all') {
+        const langs = (doc.languages || []).map(l => l.toLowerCase());
+        if (!langs.includes(selectedLanguage.toLowerCase())) return false;
+      }
+
+      // 6. Gender Filter
+      if (selectedGender !== 'all' && doc.gender !== selectedGender) {
+        return false;
+      }
+
+      // 7. Experience Filter
+      if (doc.experienceYears < selectedExperience) {
+        return false;
+      }
+
+      // 8. Available Today
+      if (availableTodayOnly && !doc.availableToday) {
+        return false;
+      }
+
+      // 9. Fee Filter
+      if (doc.feeINR > maxFeeINR) {
+        return false;
+      }
+
       return true;
     }).sort((a, b) => {
       if (sortBy === 'rating') return b.rating - a.rating;
@@ -108,15 +242,16 @@ export const DoctorList: React.FC<DoctorListProps> = ({
     });
   }, [
     doctors,
+    extraDoctors,
     selectedSpecialty,
     selectedCity,
     consultationTypeFilter,
+    activeSearchQuery,
     selectedLanguage,
     selectedGender,
     selectedExperience,
     availableTodayOnly,
     maxFeeINR,
-    searchQuery,
     sortBy
   ]);
 
@@ -129,7 +264,8 @@ export const DoctorList: React.FC<DoctorListProps> = ({
     setSelectedExperience(0);
     setAvailableTodayOnly(false);
     setMaxFeeINR(2000);
-    setSearchQuery('');
+    setInternalSearchQuery('');
+    if (onSearchChange) onSearchChange('');
     setSortBy('recommended');
   };
 
@@ -209,8 +345,8 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                   <Search className="w-3.5 h-3.5 text-[#70848B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    value={activeSearchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
                     placeholder="Search doctor, hospital, or specialty..."
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-white border border-[#D5CDBC] text-[#032F31] placeholder-[#70848B] focus:outline-none focus:border-[#032F31]"
                   />
@@ -373,7 +509,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
 
           {/* Doctor Cards List */}
           <div className="lg:col-span-8 xl:col-span-9 space-y-4">
-            {searchLoading ? (
+            {searchLoading && filteredDoctors.length === 0 ? (
               <div className="p-12 text-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-700 mx-auto mb-3"></div><p className="text-sm text-slate-500">Searching doctors...</p></div>
             ) : filteredDoctors.length > 0 ? (
               filteredDoctors.map((doctor: Doctor) => {

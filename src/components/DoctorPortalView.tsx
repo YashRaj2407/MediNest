@@ -633,6 +633,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
           <DoctorEarningsTab
             appointments={appointments}
             doctorFeeINR={doctor.feeINR}
+            doctorId={doctor.id}
           />
         )}
 

@@ -1,4 +1,4 @@
-﻿import { Doctor } from '../types';
+import { Doctor } from '../types';
 import { INITIAL_DOCTORS } from '../data/doctorsData';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
@@ -30,7 +30,7 @@ function mapRowToDoctor(row: Record<string, unknown>): Doctor {
         : ['English', 'Hindi'],
     rating: row.rating ? Number(row.rating) : 0,
     reviewCount: (row.reviewCount as number) || (row.review_count as number) || 0,
-    nextAvailableSlot: 'Today',
+    nextAvailableSlot: (row.accepting_appointments === false || row.acceptingNewAppointments === false) ? 'Paused' : 'Today',
     feeINR: (row.feeINR as number) || (row.fee_inr as number) || 0,
     consultationModes: Array.isArray(row.consultationModes)
       ? row.consultationModes as ('video' | 'clinic')[]
@@ -41,7 +41,8 @@ function mapRowToDoctor(row: Record<string, unknown>): Doctor {
           : ['video', 'clinic'],
     about: (row.about as string) || '',
     registrationNumber: (row.registrationNumber as string) || (row.registration_number as string) || '',
-    availableToday: (row.availableToday as boolean) ?? (row.accepting_appointments as boolean) ?? true,
+    availableToday: ((row.accepting_appointments as boolean) ?? (row.acceptingNewAppointments as boolean) ?? (row.availableToday as boolean)) !== false,
+    acceptingNewAppointments: ((row.accepting_appointments as boolean) ?? (row.acceptingNewAppointments as boolean)) !== false,
     services: (row.services as any) || [],
     reviews: (row.reviews as any) || [],
   };
@@ -66,7 +67,7 @@ export async function fetchDoctors(filters?: {
     const res = await fetch(`${API_BASE_URL}/doctors?${params.toString()}`);
     if (res.ok) {
       const body = await res.json();
-      if (body.success && Array.isArray(body.data) && body.data.length > 0) {
+      if (body.success && Array.isArray(body.data)) {
         return body.data.map(mapRowToDoctor).filter(d => d.name && d.name !== 'Unknown Doctor' && d.name !== 'Doctor');
       }
       return [];
@@ -75,7 +76,51 @@ export async function fetchDoctors(filters?: {
     // Backend API unavailable — use static fallback
   }
 
-  return INITIAL_DOCTORS;
+  // Safe fallback: filter INITIAL_DOCTORS by requested filters so wrong specialties are never leaked
+  let fallback = [...INITIAL_DOCTORS];
+  if (filters?.specialty && filters.specialty !== 'all') {
+    const targetSpec = filters.specialty.toLowerCase().trim();
+    const targetSlug = targetSpec.replace(/\s+/g, '-');
+    fallback = fallback.filter(d => {
+      const docSpecId = (d.specialtyId || '').toLowerCase().trim();
+      const docSpecName = (d.specialty || '').toLowerCase().trim();
+      const docSpecSlug = docSpecName.replace(/\s+/g, '-');
+      return (
+        docSpecId === targetSpec ||
+        docSpecName === targetSpec ||
+        docSpecSlug === targetSlug ||
+        docSpecName.includes(targetSpec) ||
+        docSpecId.includes(targetSpec) ||
+        targetSpec.includes(docSpecId) ||
+        targetSpec.includes(docSpecSlug)
+      );
+    });
+  }
+  if (filters?.city && filters.city !== 'All Cities') {
+    const targetCity = filters.city.toLowerCase().trim();
+    fallback = fallback.filter(d => {
+      const docCity = (d.city || '').toLowerCase().trim();
+      return docCity === targetCity || docCity === 'all cities' || docCity.includes(targetCity);
+    });
+  }
+  if (filters?.consultationType && filters.consultationType !== 'all') {
+    fallback = fallback.filter(d => d.consultationModes.includes(filters.consultationType as any));
+  }
+  if (filters?.search && filters.search.trim()) {
+    const q = filters.search.trim().toLowerCase();
+    fallback = fallback.filter(d =>
+      (d.name || '').toLowerCase().includes(q) ||
+      (d.specialty || '').toLowerCase().includes(q) ||
+      (d.specialtyId || '').toLowerCase().includes(q) ||
+      (d.clinicName || '').toLowerCase().includes(q) ||
+      (d.city || '').toLowerCase().includes(q) ||
+      (d.about || '').toLowerCase().includes(q) ||
+      (d.qualifications || '').toLowerCase().includes(q) ||
+      (d.languages || []).some(l => l.toLowerCase().includes(q))
+    );
+  }
+
+  return fallback;
 }
 
 /**

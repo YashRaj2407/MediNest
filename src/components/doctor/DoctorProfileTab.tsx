@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Stethoscope, 
@@ -39,6 +39,33 @@ export const DoctorProfileTab: React.FC<DoctorProfileTabProps> = ({
   const [feeINR, setFeeINR] = useState(doctor.feeINR && doctor.feeINR > 0 ? doctor.feeINR.toString() : '');
   const [languages, setLanguages] = useState(Array.isArray(doctor.languages) ? doctor.languages.join(', ') : (doctor.languages || 'English'));
   const [acceptingAppointments, setAcceptingAppointments] = useState(doctor.acceptingNewAppointments);
+  const [toggleLoading, setToggleLoading] = useState(false);
+
+  useEffect(() => {
+    setAcceptingAppointments(doctor.acceptingNewAppointments);
+  }, [doctor.acceptingNewAppointments]);
+
+  const handleToggleAcceptingAppointments = async () => {
+    if (toggleLoading) return;
+    const nextVal = !acceptingAppointments;
+    setAcceptingAppointments(nextVal);
+    setToggleLoading(true);
+
+    const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+    try {
+      await fetch(`${API_BASE_URL}/doctors/${doctor.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acceptingAppointments: nextVal }),
+      });
+    } catch (_) {}
+
+    onUpdateProfile({
+      ...doctor,
+      acceptingNewAppointments: nextVal,
+    });
+    setToggleLoading(false);
+  };
   const [videoConsultationEnabled, setVideoConsultationEnabled] = useState(
     doctor.consultationModes.includes('video')
   );
@@ -149,8 +176,10 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://loca
           </span>
           <button
             type="button"
-            onClick={() => setAcceptingAppointments(!acceptingAppointments)}
-            className="flex items-center gap-2 cursor-pointer"
+            disabled={toggleLoading}
+            onClick={handleToggleAcceptingAppointments}
+            className="flex items-center gap-2 cursor-pointer transition-transform active:scale-95"
+            title={acceptingAppointments ? 'Click to Pause Appointments' : 'Click to Activate Appointments'}
           >
             {acceptingAppointments ? (
               <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold shadow-xs">

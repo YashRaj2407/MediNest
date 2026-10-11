@@ -36,6 +36,8 @@ interface DoctorProfileModalProps {
     date: string, 
     timeSlot: string
   ) => void;
+  savedDoctorIds?: string[];
+  onToggleSaveDoctor?: (doctorId: string) => void;
 }
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
@@ -44,7 +46,9 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   doctor,
   isOpen,
   onClose,
-  onProceedToBooking
+  onProceedToBooking,
+  savedDoctorIds = [],
+  onToggleSaveDoctor,
 }) => {
   // ── ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURN ──────────────────────
   const [consultationMode, setConsultationMode] = useState<ConsultationType>('video');
@@ -53,10 +57,11 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [slotsList, setSlotsList] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'reviews' | 'clinic'>('overview');
-  const [isSaved, setIsSaved] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [slotAlert, setSlotAlert] = useState<string | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  // Derived: is this doctor saved by the patient?
+  const isSaved = doctor ? savedDoctorIds.includes(doctor.id) : false;
 
 
   // Generate next 7 days for booking calendar — memoized so it doesn't change on every render
@@ -80,7 +85,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     if (!silent) setLoadingSlots(true);
     setIsRefreshing(true);
     const chosenIsoDate = nextDays[selectedDateIndex]?.isoString || new Date().toISOString().split('T')[0];
-    generateSlots(doctor.id, chosenIsoDate).then((generated) => {
+    generateSlots(doctor.id, chosenIsoDate, [], doctor.acceptingNewAppointments).then((generated) => {
       setSlotsList(generated);
 
       // Check if previously selected slot has become unavailable
@@ -88,7 +93,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
         const match = generated.find(s => s.time === selectedSlot);
         if (match && match.status !== 'available') {
           setSelectedSlot('');
-          setSlotAlert('This slot is no longer available. Please select another time.');
+          setSlotAlert(match.label === 'Appointments Paused' ? 'Doctor has paused new appointments. All slots are blocked.' : 'This slot is no longer available. Please select another time.');
           setTimeout(() => setSlotAlert(null), 6000);
         }
       }
@@ -225,15 +230,15 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
             {/* Bookmark / Report buttons */}
             <div className="flex sm:flex-col gap-2 shrink-0">
               <button
-                onClick={() => setIsSaved(!isSaved)}
-                className={`p-2.5 rounded-xl border transition-colors flex items-center justify-center cursor-pointer ${
+                onClick={() => doctor && onToggleSaveDoctor?.(doctor.id)}
+                className={`p-2.5 rounded-xl border transition-all flex items-center justify-center cursor-pointer ${
                   isSaved 
-                    ? 'bg-teal-500 border-teal-500 text-slate-950 font-bold' 
+                    ? 'bg-teal-500 border-teal-500 text-slate-950 font-bold scale-105' 
                     : 'border-slate-700 hover:bg-slate-800 text-slate-300'
                 }`}
-                title={isSaved ? 'Doctor Saved' : 'Save Doctor'}
+                title={isSaved ? 'Doctor Saved — Click to unsave' : 'Save Doctor'}
               >
-                <Bookmark className="w-4 h-4" />
+                <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-current' : ''}`} />
               </button>
               <button
                 type="button"
@@ -516,7 +521,19 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   </div>
                 )}
 
-                {!loadingSlots && slotsList.length > 0 && slotsList.every(s => s.status === 'blocked') && (
+                {!loadingSlots && (doctor.acceptingNewAppointments === false || (slotsList.length > 0 && slotsList.every(s => s.status === 'blocked' && s.label === 'Appointments Paused'))) ? (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 flex items-center gap-3 font-semibold text-xs animate-in fade-in">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div>
+                      <div className="font-bold text-amber-900 text-xs sm:text-sm">
+                        Appointments Paused (Offline)
+                      </div>
+                      <div className="text-amber-800 text-[11px] mt-0.5">
+                        {doctor.name} has temporarily paused taking new appointments. All booking slots are blocked.
+                      </div>
+                    </div>
+                  </div>
+                ) : !loadingSlots && slotsList.length > 0 && slotsList.every(s => s.status === 'blocked') ? (
                   <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 flex items-center gap-3 font-semibold text-xs animate-in fade-in">
                     <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
                     <div>
@@ -528,7 +545,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                       </div>
                     </div>
                   </div>
-                )}
+                ) : null}
 
                 {loadingSlots ? (
                   <div className="py-6 text-center text-xs text-slate-400 animate-pulse">
@@ -577,14 +594,31 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
 
               {/* Book Action CTA */}
               <div className="pt-2 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={handleBook}
-                  className="w-full py-3 px-4 rounded-xl bg-[#032F31] hover:bg-[#074245] text-white text-xs font-bold tracking-wide shadow-md transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
-                >
-                  <Calendar className="w-4 h-4 text-[#FAE58D]" />
-                  Proceed to Book ({nextDays[selectedDateIndex].fullDateString}, {selectedSlot})
-                </button>
+                {(() => {
+                  const isDoctorPaused = doctor.acceptingNewAppointments === false || (slotsList.length > 0 && slotsList.every(s => s.status === 'blocked' && s.label === 'Appointments Paused'));
+                  const hasAvailableSlot = Boolean(selectedSlot && slotsList.some(s => s.time === selectedSlot && s.status === 'available'));
+                  const canProceed = !isDoctorPaused && hasAvailableSlot;
+
+                  return (
+                    <button
+                      type="button"
+                      disabled={!canProceed}
+                      onClick={handleBook}
+                      className={`w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wide shadow-md transition-all flex items-center justify-center gap-2 ${
+                        !canProceed
+                          ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
+                          : 'bg-[#032F31] hover:bg-[#074245] text-white active:scale-98 cursor-pointer'
+                      }`}
+                    >
+                      <Calendar className={`w-4 h-4 ${!canProceed ? 'text-slate-400' : 'text-[#FAE58D]'}`} />
+                      {isDoctorPaused
+                        ? 'Appointments Paused (Booking Blocked)'
+                        : !hasAvailableSlot
+                          ? 'Please Select an Available Slot'
+                          : `Proceed to Book (${nextDays[selectedDateIndex].fullDateString}, ${selectedSlot})`}
+                    </button>
+                  );
+                })()}
                 <p className="text-[10px] text-center text-slate-400 mt-2">
                   100% Secure INR Checkout • Free Rescheduling
                 </p>

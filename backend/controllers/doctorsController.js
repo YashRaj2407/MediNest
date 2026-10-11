@@ -1,5 +1,6 @@
 import pool from '../config/db.js';
 import { v4 as uuidv4 } from 'uuid';
+import { broadcastScheduleUpdate } from '../services/sseService.js';
 
 /** Helper: maps a DB row (doctor_profiles JOIN profiles) → frontend Doctor/DoctorAuthData shape */
 function mapDoctorRow(row) {
@@ -21,7 +22,7 @@ function mapDoctorRow(row) {
     languages: typeof row.languages === 'string' ? JSON.parse(row.languages) : (row.languages || ['English', 'Hindi']),
     rating: row.rating ? Number(row.rating) : 0,
     reviewCount: row.review_count || 0,
-    nextAvailableSlot: 'Today',
+    nextAvailableSlot: row.accepting_appointments ? 'Today' : 'Paused',
     feeINR: row.fee_inr || 0,
     consultationModes: typeof row.consultation_types === 'string' ? JSON.parse(row.consultation_types) : (row.consultation_types || ['video', 'clinic']),
     about: row.about || '',
@@ -45,25 +46,47 @@ export async function getDoctors(req, res) {
       FROM doctor_profiles dp
       JOIN profiles p ON dp.user_id = p.id
       WHERE dp.verification_status IN ('verified', 'approved')
-        AND dp.accepting_appointments = TRUE
         AND p.account_status = 'active'
     `;
     const params = [];
 
     if (specialty && specialty !== 'all') {
-      sql += ` AND dp.specialty_id = ?`;
-      params.push(specialty);
+      const specTrim = specialty.trim().toLowerCase();
+      const specSlug = specTrim.replace(/\s+/g, '-');
+      sql += ` AND (
+        LOWER(dp.specialty_id) = ? 
+        OR LOWER(dp.specialty) = ? 
+        OR LOWER(REPLACE(dp.specialty, ' ', '-')) = ? 
+        OR LOWER(dp.specialty) LIKE ?
+        OR LOWER(dp.specialty_id) LIKE ?
+      )`;
+      params.push(specTrim, specTrim, specSlug, `%${specTrim}%`, `%${specSlug}%`);
     }
+
     if (city && city !== 'All Cities') {
-      sql += ` AND dp.city = ?`;
-      params.push(city);
+      sql += ` AND (dp.city = ? OR dp.city = 'All Cities')`;
+      params.push(city.trim());
     }
+
+    if (consultationType && consultationType !== 'all') {
+      sql += ` AND (JSON_CONTAINS(dp.consultation_types, JSON_QUOTE(?)) OR dp.consultation_types LIKE ?)`;
+      params.push(consultationType.trim(), `%${consultationType.trim()}%`);
+    }
+
     if (search && search.trim()) {
       let termStr = search.trim();
       if (termStr.toLowerCase() === 'anaya') termStr = 'Ananya';
-      sql += ` AND (dp.name LIKE ? OR dp.specialty LIKE ? OR dp.clinic_name LIKE ? OR dp.city LIKE ?)`;
       const term = `%${termStr}%`;
-      params.push(term, term, term, term);
+      sql += ` AND (
+        dp.name LIKE ? 
+        OR dp.specialty LIKE ? 
+        OR dp.specialty_id LIKE ? 
+        OR dp.clinic_name LIKE ? 
+        OR dp.city LIKE ? 
+        OR dp.about LIKE ? 
+        OR dp.qualifications LIKE ?
+      )`;
+      params.push(term, term, term, term, term, term, term);
     }
 
     sql += ` ORDER BY dp.rating DESC, dp.review_count DESC`;
@@ -143,6 +166,15 @@ export async function updateDoctorProfile(req, res) {
     const { id } = req.params;
     const { clinicName, address, feeINR, qualifications, about, acceptingAppointments } = req.body;
 
+    const [existing] = await pool.query('SELECT * FROM doctor_profiles WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, error: 'Doctor profile not found' });
+    }
+
+    const newAccepting = acceptingAppointments !== undefined
+      ? Boolean(acceptingAppointments)
+      : Boolean(existing[0].accepting_appointments);
+
     await pool.query(
       `UPDATE doctor_profiles 
        SET clinic_name = COALESCE(?, clinic_name),
@@ -150,12 +182,22 @@ export async function updateDoctorProfile(req, res) {
            fee_inr = COALESCE(?, fee_inr),
            qualifications = COALESCE(?, qualifications),
            about = COALESCE(?, about),
-           accepting_appointments = COALESCE(?, accepting_appointments)
+           accepting_appointments = ?
        WHERE id = ?`,
-      [clinicName, address, feeINR, qualifications, about, acceptingAppointments, id]
+      [clinicName, address, feeINR, qualifications, about, newAccepting ? 1 : 0, id]
     );
 
-    return res.json({ success: true, message: 'Doctor profile updated successfully' });
+    // Broadcast SSE schedule_update so patient UI blocks/unblocks slots immediately in real time
+    broadcastScheduleUpdate(id, {
+      action: 'acceptance_status_changed',
+      acceptingAppointments: newAccepting
+    });
+
+    return res.json({
+      success: true,
+      message: 'Doctor profile updated successfully',
+      acceptingAppointments: newAccepting
+    });
   } catch (error) {
     console.error('[Express Update Doctor Profile Error]:', error);
     return res.status(500).json({ success: false, error: error.message });
@@ -332,21 +374,60 @@ export async function getDoctorStats(req, res) {
     );
     const completedConsultations = apptRows[0].count;
 
-    // Get total earnings
+    // Get total earnings from all paid appointments for this doctor
     const [paymentRows] = await pool.query(
-      `SELECT SUM(p.amount_inr) as total
+      `SELECT COALESCE(SUM(p.amount_inr), 0) as total
        FROM payments p
        JOIN appointments a ON p.appointment_id = a.id
        WHERE a.doctor_id = ? AND p.status = 'paid'`,
       [id]
     );
-    const totalEarnings = paymentRows[0].total || 0;
+    const totalEarnings = Number(paymentRows[0].total || 0);
+
+    // Get today's earnings (paid today)
+    const [todayPaymentRows] = await pool.query(
+      `SELECT COALESCE(SUM(p.amount_inr), 0) as today_total
+       FROM payments p
+       JOIN appointments a ON p.appointment_id = a.id
+       WHERE a.doctor_id = ? AND p.status = 'paid'
+         AND (DATE(p.created_at) = CURRENT_DATE() OR DATE(CONVERT_TZ(p.created_at, '+00:00', '+05:30')) = DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30')))`,
+      [id]
+    );
+    const todayEarnings = Number(todayPaymentRows[0]?.today_total || 0);
+
+    // Get weekly earnings (last 7 days)
+    const [weekPaymentRows] = await pool.query(
+      `SELECT COALESCE(SUM(p.amount_inr), 0) as week_total
+       FROM payments p
+       JOIN appointments a ON p.appointment_id = a.id
+       WHERE a.doctor_id = ? AND p.status = 'paid'
+         AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+      [id]
+    );
+    const weekEarnings = Number(weekPaymentRows[0]?.week_total || 0);
+
+    // Get transactions with appointment & patient details
+    const [transactions] = await pool.query(
+      `SELECT p.id as payment_id, p.razorpay_payment_id, p.amount_inr, p.payment_method, p.status as payment_status, p.created_at as paid_at,
+              a.id as appointment_id, a.patient_name, a.patient_email, a.patient_phone, a.consultation_type,
+              a.start_datetime, a.status as appointment_status, a.symptoms as visit_reason
+       FROM payments p
+       JOIN appointments a ON p.appointment_id = a.id
+       WHERE a.doctor_id = ? AND p.status = 'paid'
+       ORDER BY p.created_at DESC
+       LIMIT 50`,
+      [id]
+    );
 
     return res.json({
       success: true,
       data: {
         completedConsultations,
-        totalEarnings
+        totalEarnings,
+        todayEarnings,
+        weekEarnings,
+        pendingPayout: totalEarnings,
+        transactions: transactions || []
       }
     });
   } catch (error) {

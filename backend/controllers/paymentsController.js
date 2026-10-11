@@ -50,6 +50,21 @@ export async function createRazorpayOrder(req, res) {
 
     await connection.beginTransaction();
 
+    // 0. Verify doctor is currently accepting appointments
+    if (doctor_id) {
+      const [docCheck] = await connection.query(
+        `SELECT accepting_appointments, name FROM doctor_profiles WHERE id = ?`,
+        [doctor_id]
+      );
+      if (docCheck.length > 0 && !docCheck[0].accepting_appointments) {
+        await connection.rollback();
+        console.warn(`[Order Rejected] Doctor ${doctor_id} has paused new appointments.`);
+        return res.status(400).json({
+          error: `Dr. ${docCheck[0].name} has paused new appointments. Bookings are temporarily blocked.`
+        });
+      }
+    }
+
     // 1. Check double-booking & active unexpired slot holds
     if (doctor_id && formattedSlotDatetime) {
       console.log(`[Slot Check] Checking conflicts for doctor=${doctor_id} at slot=${formattedSlotDatetime}`);
@@ -222,6 +237,21 @@ export async function verifyRazorpayPayment(req, res) {
          VALUES (?, 'patient', ?, ?, ?, 'active')`,
         [patientId, patientName, patientEmail, patientPhone]
       );
+    }
+
+    // Verify doctor is still accepting appointments
+    if (appointment.doctor_id) {
+      const [docCheck] = await connection.query(
+        `SELECT accepting_appointments, name FROM doctor_profiles WHERE id = ?`,
+        [appointment.doctor_id]
+      );
+      if (docCheck.length > 0 && !docCheck[0].accepting_appointments) {
+        await connection.rollback();
+        console.warn(`[Payment Insert Rejected] Doctor ${appointment.doctor_id} has paused new appointments.`);
+        return res.status(400).json({
+          error: `Dr. ${docCheck[0].name} has paused new appointments. Bookings are temporarily blocked.`
+        });
+      }
     }
 
     // 4. Format datetimes

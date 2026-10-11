@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useUser, useClerk, useAuth } from '@clerk/clerk-react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -178,8 +178,29 @@ export default function App() {
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [loggedInAdmin, setLoggedInAdmin] = useState<AdminAuthData | null>(null);
 
-  // Saved Doctors State
-  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>([]);
+  // Saved Doctors State (persisted in localStorage)
+  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('medinest_saved_doctors');
+      return saved ? JSON.parse(saved) : [];
+    } catch (_) {
+      return [];
+    }
+  });
+
+  const handleToggleSaveDoctor = (docId: string) => {
+    setSavedDoctorIds(prev => {
+      const exists = prev.includes(docId);
+      const next = exists ? prev.filter(id => id !== docId) : [...prev, docId];
+      try {
+        localStorage.setItem('medinest_saved_doctors', JSON.stringify(next));
+      } catch (_) {}
+      const targetDoc = doctors.find(d => d.id === docId) || INITIAL_DOCTORS.find(d => d.id === docId);
+      const name = targetDoc?.name || 'Doctor';
+      showToast(exists ? `Removed ${name} from saved doctors.` : `Saved ${name} to your dashboard.`);
+      return next;
+    });
+  };
 
   const [authCallbackNotice, setAuthCallbackNotice] = useState<string | null>(null);
 
@@ -434,7 +455,11 @@ export default function App() {
 
   const handleBookingSuccess = (newAppointment: Appointment) => {
     setAppointments(prev => [newAppointment, ...prev]);
-    showToast(`Appointment confirmed with ${newAppointment.doctorName}!`);
+    if (loggedInDoctor && loggedInDoctor.id === newAppointment.doctorId) {
+      setDoctorAppointments(prev => [newAppointment, ...prev]);
+    }
+    loadPatientAppointments();
+    showToast(`Appointment confirmed with ${newAppointment.doctorName}! Payment recorded.`);
   };
 
   const handleCancelAppointment = async (id: string) => {
@@ -534,7 +559,15 @@ export default function App() {
     showToast('Signed out of Admin Portal.');
   };
 
-  const savedDoctorsList = doctors.filter(d => savedDoctorIds.includes(d.id));
+  const savedDoctorsList = useMemo(() => {
+    const list = doctors.filter(d => savedDoctorIds.includes(d.id));
+    const missingIds = savedDoctorIds.filter(id => !list.some(d => d.id === id));
+    if (missingIds.length > 0) {
+      const fromInitial = INITIAL_DOCTORS.filter(d => missingIds.includes(d.id));
+      return [...list, ...fromInitial];
+    }
+    return list;
+  }, [doctors, savedDoctorIds]);
 
   // -- Admin Portal full-page view -------------------------------------------
   if (isAdminPortalOpen && loggedInAdmin) {
@@ -648,6 +681,8 @@ export default function App() {
           onCityChange={setSelectedCity}
           consultationTypeFilter={consultationTypeFilter}
           onConsultationTypeChange={setConsultationTypeFilter}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
           onViewProfile={handleOpenDoctorProfile}
           onBookAppointment={handleDirectBook}
         />
@@ -686,6 +721,8 @@ export default function App() {
             isOpen={!!activeDoctorForProfile}
             onClose={() => setActiveDoctorForProfile(null)}
             onProceedToBooking={handleProceedToBookingFromProfile}
+            savedDoctorIds={savedDoctorIds}
+            onToggleSaveDoctor={handleToggleSaveDoctor}
           />
         </DoctorPortalErrorBoundary>
       )}
@@ -717,6 +754,7 @@ export default function App() {
           user={user}
           appointments={appointments}
           savedDoctors={savedDoctorsList}
+          onToggleSaveDoctor={handleToggleSaveDoctor}
           onCancelAppointment={handleCancelAppointment}
           onRescheduleAppointment={handleRescheduleAppointment}
           onViewReceipt={handleViewReceipt}
