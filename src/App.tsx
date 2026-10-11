@@ -696,6 +696,7 @@ export default function App() {
       <Footer
         onSelectSpecialty={handleSelectSpecialty}
         onOpenSymptomChecker={() => setIsSymptomCheckerOpen(true)}
+        onOpenDoctorPortal={handleOpenDoctorPortal}
       />
 
       {/* MODALS */}

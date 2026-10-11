@@ -56,11 +56,13 @@ export const Footer: React.FC<FooterProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <Mail className="w-3.5 h-3.5 text-[#FAE58D] shrink-0" />
-                <span>care@medinest.in</span>
+                <a href="mailto:yashdhawale2407@gmail.com" className="hover:text-[#FAE58D] transition-colors">
+                  yashdhawale2407@gmail.com
+                </a>
               </div>
               <div className="flex items-center gap-2">
                 <MapPin className="w-3.5 h-3.5 text-[#FAE58D] shrink-0" />
-                <span>Koramangala, Bengaluru, Karnataka - 560034</span>
+                <span>Bansal Vihar Bhosari pune Dighi Road -411039</span>
               </div>
             </div>
           </div>
@@ -127,16 +129,34 @@ export const Footer: React.FC<FooterProps> = ({
             <div className="pt-3">
               <span className="text-[11px] font-bold text-slate-200 block mb-2">Connect with us</span>
               <div className="flex items-center gap-2">
-                <a href="#" aria-label="Facebook" className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors">
+                <a 
+                  href="https://www.facebook.com/share/1CXVHCNr55/" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Facebook" 
+                  className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors cursor-pointer"
+                  title="Follow on Facebook"
+                >
                   <Facebook className="w-4 h-4" />
                 </a>
-                <a href="#" aria-label="Twitter" className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors">
+                <a 
+                  href="https://x.com/yash_dhawa59836" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Twitter / X" 
+                  className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors cursor-pointer"
+                  title="Follow on X (Twitter)"
+                >
                   <Twitter className="w-4 h-4" />
                 </a>
-                <a href="#" aria-label="Instagram" className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors">
-                  <Instagram className="w-4 h-4" />
-                </a>
-                <a href="#" aria-label="LinkedIn" className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors">
+                <a 
+                  href="https://www.linkedin.com/in/yash-dhawale-54322a395?utm_source=share_via&utm_content=profile&utm_medium=member_android" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="LinkedIn" 
+                  className="w-8 h-8 rounded-lg bg-[#084042] flex items-center justify-center text-slate-300 hover:bg-[#FAE58D] hover:text-[#032F31] transition-colors cursor-pointer"
+                  title="Connect on LinkedIn"
+                >
                   <Linkedin className="w-4 h-4" />
                 </a>
               </div>
