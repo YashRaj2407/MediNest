@@ -7,8 +7,12 @@ import { broadcastScheduleUpdate } from '../services/sseService.js';
 dotenv.config();
 dotenv.config({ path: '.env.local' });
 
-const razorpayKeyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '';
-const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+function getRazorpayCredentials() {
+  const keyId = (process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '').trim();
+  const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+  const isPlaceholder = keyId.includes('xxx') || keySecret.includes('xxx');
+  return { keyId, keySecret, isPlaceholder };
+}
 
 /**
  * Format a Date object or date/time string to MySQL 'YYYY-MM-DD HH:MM:SS' in IST (+05:30)
@@ -47,13 +51,19 @@ function addMinutesToMySQLDatetime(dtStr, minutes = 30) {
  * Creates a Razorpay order and holds the requested slot in MySQL.
  */
 export async function createRazorpayOrder(req, res) {
-  if (!razorpayKeyId || !razorpayKeySecret) {
-    console.error('[Razorpay Config Error] Missing server-side Razorpay credentials (RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET).');
-    return res.status(500).json({ error: 'Razorpay credentials are not configured on the server.' });
+  const { keyId, keySecret, isPlaceholder } = getRazorpayCredentials();
+
+  if (!keyId || !keySecret || isPlaceholder) {
+    const errorMsg = isPlaceholder
+      ? 'Razorpay credentials contain placeholder values. Please set your real RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Railway variables.'
+      : 'Razorpay credentials (RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET) are not configured on the server.';
+    console.error(`[Razorpay Config Error] ${errorMsg}`);
+    return res.status(500).json({ error: errorMsg });
   }
 
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     const { amount_inr, appointment_ref, doctor_id, slot_datetime } = req.body;
 
     if (!amount_inr || !appointment_ref) {
@@ -133,7 +143,7 @@ export async function createRazorpayOrder(req, res) {
     const amountPaise = Math.round(Number(amount_inr) * 100);
     console.log(`[Razorpay Order] Creating order: ref=${appointment_ref} amount=INR ${amount_inr} (${amountPaise} paise)`);
 
-    const razorpay = new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret });
+    const razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
     const rzpOrder = await razorpay.orders.create({
       amount: amountPaise,
       currency: 'INR',
@@ -159,15 +169,17 @@ export async function createRazorpayOrder(req, res) {
 
     return res.json({
       order_id: orderId,
-      key_id: razorpayKeyId,
+      key_id: keyId,
       amount: amountPaise,
     });
   } catch (error) {
-    await connection.rollback();
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
     console.error('[Create Razorpay Order Error]:', error.message);
     return res.status(500).json({ error: error.message || 'Failed to create payment order' });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 }
 
@@ -176,13 +188,19 @@ export async function createRazorpayOrder(req, res) {
  * Verifies HMAC-SHA256 signature and confirms appointment in MySQL.
  */
 export async function verifyRazorpayPayment(req, res) {
-  if (!razorpayKeySecret) {
-    console.error('[Razorpay Config Error] Missing RAZORPAY_KEY_SECRET on server.');
-    return res.status(500).json({ error: 'Razorpay secret key is not configured on the server.' });
+  const { keySecret, isPlaceholder } = getRazorpayCredentials();
+
+  if (!keySecret || isPlaceholder) {
+    const errorMsg = isPlaceholder
+      ? 'Razorpay secret contains placeholder values. Please set your real RAZORPAY_KEY_SECRET in Railway variables.'
+      : 'Razorpay secret key is not configured on the server.';
+    console.error(`[Razorpay Config Error] ${errorMsg}`);
+    return res.status(500).json({ error: errorMsg });
   }
 
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, appointment } = req.body;
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !appointment) {
@@ -192,7 +210,7 @@ export async function verifyRazorpayPayment(req, res) {
     // 1. HMAC Signature Verification
     console.log(`[Payment Verification] Verifying signature for order=${razorpay_order_id} payment=${razorpay_payment_id}`);
     const expectedSig = crypto
-      .createHmac('sha256', razorpayKeySecret)
+      .createHmac('sha256', keySecret)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
       .digest('hex');
 
@@ -340,10 +358,12 @@ export async function verifyRazorpayPayment(req, res) {
       receipt_number: receiptNumber,
     });
   } catch (error) {
-    await connection.rollback();
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
     console.error('[Payment Verification Error]:', error.message);
     return res.status(500).json({ error: error.message || 'Payment verification failed' });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 }

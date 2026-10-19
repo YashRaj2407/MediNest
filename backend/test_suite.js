@@ -718,13 +718,14 @@ async function runTests() {
       [testGId, patientAId, assignedDocId]
     );
 
-    // 1. Reschedule
-    const newStart = new Date(Date.now() + 86400000).toISOString();
-    const newEnd = new Date(Date.now() + 86400000 + 1800000).toISOString();
+    // 1. Reschedule (set to 11:00 AM within doctor 09:00 - 18:00 working hours)
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dateStr = tomorrow.toISOString().split('T')[0];
     const resResched = await fetch(`${BASE_URL}/appointments/${testGId}/reschedule`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-user-id': patientAId },
-      body: JSON.stringify({ startDatetime: newStart, endDatetime: newEnd })
+      body: JSON.stringify({ newDate: dateStr, newTimeSlot: '11:00 AM' })
     });
     assert(resResched.ok, 'Reschedule endpoint succeeds');
 

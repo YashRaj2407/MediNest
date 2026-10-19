@@ -7,7 +7,8 @@
 
 import { CreateAppointmentPayload, computeSlotEndTime } from './appointments';
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+const rawApiUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+const API_BASE_URL = String(rawApiUrl).trim().replace(/\/+$/, '');
 
 const RAZORPAY_KEY_ID: string =
   (import.meta as any).env?.VITE_RAZORPAY_KEY_ID ?? '';
