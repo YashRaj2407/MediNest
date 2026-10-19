@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "start": "node backend/server.js",
     "server": "node backend/server.js",
     "test": "node backend/test_suite.js",
     "test:mongo": "node backend/test_chat_mongodb.js"
