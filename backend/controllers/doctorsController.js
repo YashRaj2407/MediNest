@@ -488,3 +488,112 @@ export async function handleDocumentUpload(req, res) {
     return res.status(500).json({ success: false, error: error.message });
   }
 }
+
+/**
+ * GET /api/v1/doctors/saved
+ * Retrieve the authenticated patient's saved doctors.
+ */
+export async function getSavedDoctors(req, res) {
+  try {
+    const patientId = req.user?.id;
+    if (!patientId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT sd.doctor_id, sd.created_at,
+              dp.id, dp.name, dp.gender, dp.photo, dp.specialty, dp.specialty_id,
+              dp.qualifications, dp.experience_years, dp.clinic_name, dp.clinic_address,
+              dp.city, dp.fee_inr, dp.consultation_types, dp.about, dp.languages,
+              dp.rating, dp.review_count, dp.verification_status, dp.accepting_appointments
+       FROM saved_doctors sd
+       LEFT JOIN doctor_profiles dp ON sd.doctor_id = dp.id
+       WHERE sd.patient_id = ?
+       ORDER BY sd.created_at DESC`,
+      [patientId]
+    );
+
+    const doctorIds = rows.map(r => r.doctor_id);
+    return res.json({
+      success: true,
+      data: doctorIds,
+      doctors: rows
+    });
+  } catch (error) {
+    console.error('[Express Get Saved Doctors Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * POST /api/v1/doctors/saved/:doctorId
+ * Save a doctor to the authenticated patient's account.
+ */
+export async function saveDoctor(req, res) {
+  try {
+    const patientId = req.user?.id;
+    if (!patientId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+    }
+
+    const doctorId = req.params.doctorId || req.body.doctorId;
+    if (!doctorId) {
+      return res.status(400).json({ success: false, error: 'doctorId is required' });
+    }
+
+    // Verify doctor exists in database (or is a known doctor format)
+    const [docs] = await pool.query(`SELECT id FROM doctor_profiles WHERE id = ?`, [doctorId]);
+    if (docs.length === 0 && !doctorId.startsWith('doc-')) {
+      return res.status(404).json({ success: false, error: 'Doctor not found' });
+    }
+
+    const id = `save_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    await pool.query(
+      `INSERT INTO saved_doctors (id, patient_id, doctor_id)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE id = id`,
+      [id, patientId, doctorId]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Doctor saved successfully',
+      doctorId
+    });
+  } catch (error) {
+    console.error('[Express Save Doctor Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * DELETE /api/v1/doctors/saved/:doctorId
+ * Remove a doctor from the authenticated patient's saved list.
+ */
+export async function removeSavedDoctor(req, res) {
+  try {
+    const patientId = req.user?.id;
+    if (!patientId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+    }
+
+    const doctorId = req.params.doctorId;
+    if (!doctorId) {
+      return res.status(400).json({ success: false, error: 'doctorId is required' });
+    }
+
+    await pool.query(
+      `DELETE FROM saved_doctors WHERE patient_id = ? AND doctor_id = ?`,
+      [patientId, doctorId]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Doctor removed from saved list',
+      doctorId
+    });
+  } catch (error) {
+    console.error('[Express Remove Saved Doctor Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}

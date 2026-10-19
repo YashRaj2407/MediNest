@@ -7,7 +7,12 @@ import { addClient, broadcastScheduleUpdate, broadcastAppointmentUpdate } from '
 export function formatAppointmentRow(row) {
   if (!row) return null;
   const start = new Date(row.start_datetime);
-  const end = new Date(row.end_datetime);
+  let end = new Date(row.end_datetime);
+
+  // Strictly enforce 30-minute slot duration if end_datetime is corrupted or non-positive
+  if (isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    end = new Date(start.getTime() + 30 * 60 * 1000);
+  }
   
   const startStr = start.toLocaleTimeString('en-IN', {
     hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
@@ -416,13 +421,93 @@ export async function cancelAppointment(req, res) {
 }
 
 /**
+ * Helper: Add minutes to a MySQL 'YYYY-MM-DD HH:MM:SS' string.
+ * Strictly calculates using pure arithmetic to avoid timezone shifts.
+ */
+function addMinutesToMySQLDatetime(dtStr, minutes = 30) {
+  if (!dtStr) return null;
+  const [d, t] = dtStr.split(' ');
+  const [y, m, day] = d.split('-').map(Number);
+  const [hh, mm, ss] = (t || '00:00:00').split(':').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, day, 0, hh * 60 + mm + minutes, ss || 0));
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(dt.getUTCFullYear())}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`;
+}
+
+/**
+ * Helper: Resolve incoming start date/time into a MySQL DATETIME in IST (+05:30),
+ * and automatically compute end_datetime as exactly 30 minutes later.
+ */
+function parseAndValidateSlotDatetimes(body) {
+  const { startDatetime, newDate, newTimeSlot } = body;
+
+  // Case 1: newDate (YYYY-MM-DD or formatted) + newTimeSlot ("11:30 AM" or "11:30 AM – 12:00 PM")
+  if (newDate && newTimeSlot) {
+    let cleanDate = newDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+      // already ISO date
+    } else {
+      const d = new Date(cleanDate);
+      if (!isNaN(d.getTime())) {
+        cleanDate = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      }
+    }
+    const cleanTime = newTimeSlot.trim().split(/\s*[–-]\s*/)[0];
+    const match = cleanTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (match) {
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const period = match[3]?.toUpperCase();
+      if (period === 'PM' && h !== 12) h += 12;
+      if (period === 'AM' && h === 12) h = 0;
+      const pad = (n) => String(n).padStart(2, '0');
+      const sqlStart = `${cleanDate} ${pad(h)}:${pad(m)}:00`;
+      const sqlEnd = addMinutesToMySQLDatetime(sqlStart, 30);
+      const dateObj = new Date(`${cleanDate}T${pad(h)}:${pad(m)}:00+05:30`);
+      const weekday = dateObj.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+      return { sqlStart, sqlEnd, weekday, startH: h, startM: m };
+    }
+  }
+
+  // Case 2: startDatetime ISO string or MySQL datetime string
+  if (startDatetime) {
+    if (typeof startDatetime === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(startDatetime)) {
+      const sqlStart = startDatetime;
+      const sqlEnd = addMinutesToMySQLDatetime(sqlStart, 30);
+      const [dPart, tPart] = sqlStart.split(' ');
+      const [h, m] = tPart.split(':').map(Number);
+      const dateObj = new Date(`${dPart}T${tPart}+05:30`);
+      const weekday = dateObj.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+      return { sqlStart, sqlEnd, weekday, startH: h, startM: m };
+    }
+    const d = new Date(startDatetime);
+    if (!isNaN(d.getTime())) {
+      if (d.getFullYear() < 2025) {
+        d.setFullYear(new Date().getFullYear() || 2026);
+      }
+      // If ISO string with Z: convert UTC to IST (+05:30)
+      const istTime = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      const sqlStart = istTime.toISOString().slice(0, 19).replace('T', ' ');
+      const sqlEnd = addMinutesToMySQLDatetime(sqlStart, 30);
+      const [dPart, tPart] = sqlStart.split(' ');
+      const [h, m] = tPart.split(':').map(Number);
+      const dateObj = new Date(`${dPart}T${tPart}+05:30`);
+      const weekday = dateObj.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+      return { sqlStart, sqlEnd, weekday, startH: h, startM: m };
+    }
+  }
+
+  return null;
+}
+
+/**
  * PATCH /api/v1/appointments/:id/reschedule
- * Reschedule an appointment to a new date/time.
+ * Reschedule an appointment to a new date/time with strict 30-minute validation,
+ * working-hours compliance, and conflict detection.
  */
 export async function rescheduleAppointment(req, res) {
   try {
     const { id } = req.params;
-    const { startDatetime, endDatetime } = req.body;
     const userId = req.user?.id;
     const userRole = req.user?.role || 'patient';
 
@@ -430,7 +515,13 @@ export async function rescheduleAppointment(req, res) {
       return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
     }
 
-    const [rows] = await pool.query(`SELECT patient_id, doctor_id, start_datetime FROM appointments WHERE id = ?`, [id]);
+    const [rows] = await pool.query(
+      `SELECT a.*, dp.name AS doctor_name, dp.accepting_appointments
+       FROM appointments a
+       LEFT JOIN doctor_profiles dp ON a.doctor_id = dp.id
+       WHERE a.id = ?`,
+      [id]
+    );
     if (rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
     }
@@ -445,18 +536,142 @@ export async function rescheduleAppointment(req, res) {
       });
     }
 
+    // Doctor can only reschedule appointments booked with them
+    if (userRole === 'doctor') {
+      let authDoctorId = req.user?.doctorId;
+      if (!authDoctorId) {
+        const [[docProfile]] = await pool.query(`SELECT id FROM doctor_profiles WHERE user_id = ?`, [userId]);
+        if (docProfile) authDoctorId = docProfile.id;
+      }
+      if (authDoctorId && authDoctorId !== appt.doctor_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden: You cannot reschedule another doctor\'s appointment'
+        });
+      }
+    }
+
+    // Disallow rescheduling already completed or cancelled appointments
+    if (appt.status === 'completed' || appt.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot reschedule a consultation that is already ${appt.status}.`
+      });
+    }
+
+    // Check doctor accepting_appointments status
+    if (appt.accepting_appointments === 0 || appt.accepting_appointments === false) {
+      return res.status(400).json({
+        success: false,
+        error: `Dr. ${appt.doctor_name || 'the doctor'} has paused taking appointments. Rescheduling is currently unavailable.`
+      });
+    }
+
+    // Parse and validate requested slot datetimes
+    const slotInfo = parseAndValidateSlotDatetimes(req.body);
+    if (!slotInfo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or malformed date and time slot values provided.'
+      });
+    }
+
+    const { sqlStart, sqlEnd, weekday, startH, startM } = slotInfo;
     const doctorId = appt.doctor_id;
 
-    // Convert ISO string or Date to MySQL 'YYYY-MM-DD HH:MM:SS'
-    const toDbDatetime = (val) => {
-      if (!val) return null;
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? val : d.toISOString().slice(0, 19).replace('T', ' ');
-    };
+    // Validate Doctor Working Hours for this weekday
+    const [rules] = await pool.query(
+      `SELECT * FROM doctor_availability_rules WHERE doctor_id = ? AND weekday = ?`,
+      [doctorId, weekday]
+    );
 
-    const sqlStart = toDbDatetime(startDatetime);
-    const sqlEnd = toDbDatetime(endDatetime) || (sqlStart ? toDbDatetime(new Date(new Date(sqlStart).getTime() + 30 * 60 * 1000)) : null);
+    let workStartH = 9, workStartM = 0, workEndH = 18, workEndM = 0;
+    let hasExplicitDayRule = false;
 
+    if (rules.length > 0) {
+      hasExplicitDayRule = true;
+      const rule = rules[0];
+      const [sh, sm] = (rule.start_time || '09:00:00').split(':').map(Number);
+      const [eh, em] = (rule.end_time || '18:00:00').split(':').map(Number);
+      workStartH = isNaN(sh) ? 9 : sh;
+      workStartM = isNaN(sm) ? 0 : sm;
+      workEndH = isNaN(eh) ? 18 : eh;
+      workEndM = isNaN(em) ? 0 : em;
+    } else {
+      // Check if the doctor has ANY availability rules in the system
+      const [allDoctorRules] = await pool.query(
+        `SELECT weekday FROM doctor_availability_rules WHERE doctor_id = ?`,
+        [doctorId]
+      );
+      if (allDoctorRules.length > 0) {
+        // Doctor has configured working days, and this weekday is NOT one of them
+        return res.status(400).json({
+          success: false,
+          error: `Dr. ${appt.doctor_name || 'the doctor'} does not consult on ${weekday}s.`
+        });
+      }
+      // If doctor has no rules configured at all, default to 09:00 AM - 06:00 PM
+      workStartH = 9;
+      workStartM = 0;
+      workEndH = 18;
+      workEndM = 0;
+    }
+
+    const slotStartMinutes = startH * 60 + startM;
+    const slotEndMinutes = slotStartMinutes + 30; // exactly 30 minutes
+    const workStartMinutes = workStartH * 60 + workStartM;
+    const workEndMinutes = workEndH * 60 + workEndM;
+
+    if (slotStartMinutes < workStartMinutes || slotEndMinutes > workEndMinutes) {
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmtTime = (h, m) => {
+        const p = h >= 12 ? 'PM' : 'AM';
+        const dh = h % 12 === 0 ? 12 : h % 12;
+        return `${pad(dh)}:${pad(m)} ${p}`;
+      };
+      return res.status(400).json({
+        success: false,
+        error: `Selected 30-minute slot (${fmtTime(startH, startM)} – ${fmtTime(Math.floor(slotEndMinutes / 60), slotEndMinutes % 60)}) is outside Dr. ${appt.doctor_name || 'the doctor'}'s working hours (${fmtTime(workStartH, workStartM)} – ${fmtTime(workEndH, workEndM)} on ${weekday}).`
+      });
+    }
+
+    // Check for double-booking conflict with other appointments
+    const [existingAppts] = await pool.query(
+      `SELECT id FROM appointments 
+       WHERE doctor_id = ? 
+         AND id != ? 
+         AND status IN ('upcoming', 'completed')
+         AND start_datetime < ? 
+         AND end_datetime > ?`,
+      [doctorId, id, sqlEnd, sqlStart]
+    );
+
+    if (existingAppts.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'This 30-minute time slot has already been booked by another patient. Please select a different slot.'
+      });
+    }
+
+    // Check for doctor schedule blocks (breaks, leave, holidays, blocked slots)
+    const [existingBlocks] = await pool.query(
+      `SELECT id, type, reason FROM doctor_schedule_blocks
+       WHERE doctor_id = ? 
+         AND start_datetime < ? 
+         AND end_datetime > ?
+       LIMIT 1`,
+      [doctorId, sqlEnd, sqlStart]
+    );
+
+    if (existingBlocks.length > 0) {
+      const block = existingBlocks[0];
+      const reason = block.type === 'break'
+        ? 'Doctor is on scheduled break during this time slot. Please choose another slot.'
+        : (block.reason || 'This slot is unavailable due to doctor schedule block.');
+      return res.status(409).json({ success: false, error: reason });
+    }
+
+    // Perform atomic update in MySQL
     await pool.query(
       `UPDATE appointments
        SET start_datetime = ?, end_datetime = ?, status = 'upcoming'
@@ -464,13 +679,96 @@ export async function rescheduleAppointment(req, res) {
       [sqlStart, sqlEnd, id]
     );
 
+    // Fetch updated row and format
+    const [updatedRows] = await pool.query(
+      `SELECT a.*, dp.name AS doctor_name, dp.photo AS doctor_photo, dp.specialty AS doctor_specialty,
+              dp.clinic_name, dp.clinic_address, dp.city
+       FROM appointments a
+       LEFT JOIN doctor_profiles dp ON a.doctor_id = dp.id
+       WHERE a.id = ?`,
+      [id]
+    );
+
+    const updatedAppt = formatAppointmentRow(updatedRows[0]);
+
     if (doctorId) {
-      broadcastScheduleUpdate(doctorId, { action: 'appointment_rescheduled' });
+      broadcastScheduleUpdate(doctorId, { action: 'appointment_rescheduled', date: sqlStart.slice(0, 10) });
+      broadcastAppointmentUpdate({
+        doctorId,
+        patientId: appt.patient_id,
+        appointmentId: id,
+        action: 'appointment_rescheduled',
+        status: 'upcoming'
+      });
     }
 
-    return res.json({ success: true, message: 'Appointment rescheduled successfully' });
+    return res.json({
+      success: true,
+      message: 'Appointment successfully rescheduled to 30-minute slot.',
+      data: updatedAppt
+    });
   } catch (error) {
     console.error('[Express Reschedule Appointment Error]:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
+
+/**
+ * DELETE /api/v1/appointments/:id
+ * Safely delete an obsolete cancelled demo/test appointment record.
+ * Protects completed consultations and preserves financial/audit records.
+ */
+export async function deleteAppointment(req, res) {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+    const userRole = req.user?.role || 'patient';
+
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+    }
+
+    const [rows] = await pool.query(`SELECT patient_id, status FROM appointments WHERE id = ?`, [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Appointment not found' });
+    }
+
+    const appt = rows[0];
+
+    // Authorization: Patient can only delete their own appointment, or admin
+    if (userRole === 'patient' && appt.patient_id !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden: You cannot delete another patient\'s appointment'
+      });
+    }
+
+    // Only cancelled appointments can be deleted
+    if (appt.status !== 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        error: 'Only cancelled appointments can be dismissed or deleted'
+      });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(`DELETE FROM receipts WHERE appointment_id = ?`, [id]);
+      await conn.query(`DELETE FROM payments WHERE appointment_id = ?`, [id]);
+      await conn.query(`DELETE FROM appointments WHERE id = ?`, [id]);
+      await conn.commit();
+    } catch (txErr) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
+    }
+
+    return res.json({ success: true, message: 'Cancelled appointment record deleted successfully' });
+  } catch (error) {
+    console.error('[Express Delete Appointment Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+

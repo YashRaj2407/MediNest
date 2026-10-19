@@ -12,12 +12,19 @@ import {
   uploadDoctorPhoto,
   getFeaturedDoctors,
   handlePhotoUpload,
-  handleDocumentUpload
+  handleDocumentUpload,
+  getSavedDoctors,
+  saveDoctor,
+  removeSavedDoctor
 } from '../controllers/doctorsController.js';
 
 const router = express.Router();
 
 router.get('/featured', getFeaturedDoctors);
+router.get('/saved', requireAuth, getSavedDoctors);
+router.post('/saved/:doctorId', requireAuth, saveDoctor);
+router.post('/saved', requireAuth, saveDoctor);
+router.delete('/saved/:doctorId', requireAuth, removeSavedDoctor);
 router.get('/', getDoctors);
 router.post('/login', requireAuth, doctorLogin);
 router.post('/upload-photo', requireAuth, uploadPhoto.single('photo'), handlePhotoUpload);

@@ -17,25 +17,40 @@ function genAppointmentId(): string {
 }
 
 export function computeSlotEndTime(startTimeStr: string, durationMinutes = 30): string {
-  const clean = startTimeStr.trim().replace(/\s*–\s*.*$/, '');
-  const parts = clean.trim().split(' ');
-  if (parts.length < 2) return startTimeStr;
-  const [time, period] = parts;
-  const [hStr, mStr] = time.split(':');
-  let h = parseInt(hStr, 10);
-  let m = parseInt(mStr, 10);
-  if (isNaN(h) || isNaN(m)) return startTimeStr;
-  if (period?.toUpperCase() === 'PM' && h !== 12) h += 12;
-  if (period?.toUpperCase() === 'AM' && h === 12) h = 0;
-  
-  const d = new Date();
-  d.setHours(h, m + durationMinutes, 0, 0);
-  return d.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'Asia/Kolkata'
-  }).replace(/\bam\b/, 'AM').replace(/\bpm\b/, 'PM');
+  if (!startTimeStr) return '';
+  const clean = startTimeStr.trim().replace(/\s*–\s*.*$/, '').replace(/\s*-\s*.*$/, '');
+  const match = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return startTimeStr;
+
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const period = match[3]?.toUpperCase();
+
+  if (period === 'PM' && h !== 12) h += 12;
+  if (period === 'AM' && h === 12) h = 0;
+
+  const totalMinutes = h * 60 + m + durationMinutes;
+  const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+  const newH = Math.floor(normalizedMinutes / 60);
+  const newM = normalizedMinutes % 60;
+
+  const newPeriod = newH >= 12 ? 'PM' : 'AM';
+  const displayH = newH % 12 === 0 ? 12 : newH % 12;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+
+  return `${pad(displayH)}:${pad(newM)} ${newPeriod}`;
+}
+
+/**
+ * Normalizes any time slot into a clean 30-minute range: "HH:MM AM – HH:MM AM"
+ * e.g. "06:00 AM" -> "06:00 AM – 06:30 AM"
+ * e.g. "06:00 AM – 01:00 AM" -> "06:00 AM – 06:30 AM"
+ */
+export function formatTimeSlotRange(slotStr: string, durationMinutes = 30): string {
+  if (!slotStr) return '';
+  const cleanStart = slotStr.trim().split(/\s*[–-]\s*/)[0].trim();
+  const endTime = computeSlotEndTime(cleanStart, durationMinutes);
+  return `${cleanStart} – ${endTime}`;
 }
 
 export interface CreateAppointmentPayload {
@@ -77,13 +92,7 @@ export async function createAppointment(
     day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
   });
 
-  const slotEndTime = payload.timeSlotEnd && payload.timeSlotEnd !== '05:00 PM'
-    ? payload.timeSlotEnd
-    : computeSlotEndTime(payload.timeSlot, 30);
-
-  const formattedTimeSlot = payload.timeSlot.includes('–')
-    ? payload.timeSlot
-    : `${payload.timeSlot} – ${slotEndTime}`;
+  const formattedTimeSlot = formatTimeSlotRange(payload.timeSlot, 30);
 
   const localAppt: Appointment = {
     id,
@@ -188,22 +197,53 @@ export async function rescheduleAppointmentInDB(
   newTimeSlot: string,
   token?: string,
   userId?: string
-): Promise<void> {
+): Promise<Appointment> {
   const dateObj = resolveDate(newDate);
   const { h, m } = parseTime(newTimeSlot);
   dateObj.setHours(h, m, 0, 0);
 
-  try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (userId) headers['x-user-id'] = userId;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (userId) headers['x-user-id'] = userId;
 
-    await fetch(`${API_BASE_URL}/appointments/${id}/reschedule`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ startDatetime: dateObj.toISOString() }),
-    });
-  } catch (_err) {}
+  const res = await fetch(`${API_BASE_URL}/appointments/${encodeURIComponent(id)}/reschedule`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      newDate,
+      newTimeSlot,
+      startDatetime: dateObj.toISOString(),
+    }),
+  });
+
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    throw new Error(body?.error || 'Failed to reschedule appointment');
+  }
+  return body.data;
+}
+
+/**
+ * Deletes an obsolete cancelled appointment record from database with authorization.
+ */
+export async function deleteCancelledAppointmentInDB(
+  id: string,
+  token?: string,
+  userId?: string
+): Promise<void> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (userId) headers['x-user-id'] = userId;
+
+  const res = await fetch(`${API_BASE_URL}/appointments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers,
+  });
+
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    throw new Error(body?.error || 'Failed to delete cancelled appointment record');
+  }
 }
 
 /**
@@ -236,13 +276,32 @@ export async function completeAppointmentInDB(
 
 function resolveDate(dateStr: string): Date {
   const now = new Date();
+  if (!dateStr) return new Date();
   if (dateStr.startsWith('Today')) return new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   if (dateStr.startsWith('Tomorrow')) {
     const d = new Date(now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
     d.setDate(d.getDate() + 1);
     return d;
   }
-  return new Date(dateStr);
+  // If YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date();
+    dt.setFullYear(y, m - 1, d);
+    return dt;
+  }
+  // Check if string has a 4-digit year
+  const hasYear = /\b(20\d\d)\b/.test(dateStr);
+  let parsed = new Date(dateStr);
+  if (!hasYear || isNaN(parsed.getTime()) || parsed.getFullYear() < 2025) {
+    const currentYear = now.getFullYear();
+    const withYear = `${dateStr} ${currentYear}`;
+    const retry = new Date(withYear);
+    if (!isNaN(retry.getTime())) {
+      parsed = retry;
+    }
+  }
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
 function parseTime(timeStr: string): { h: number; m: number } {

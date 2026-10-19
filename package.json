@@ -7,8 +7,10 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "server": "node backend/server.js",
+    "test": "node backend/test_suite.js",
+    "test:mongo": "node backend/test_chat_mongodb.js"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.23.0",
@@ -21,6 +23,7 @@
     "express": "^4.21.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
+    "mongoose": "^9.11.2",
     "motion": "^12.23.24",
     "multer": "^2.4.0",
     "mysql2": "^3.12.0",

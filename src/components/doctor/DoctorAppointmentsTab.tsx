@@ -20,6 +20,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Appointment, Prescription } from '../../types';
+import { formatTimeSlotRange } from '../../lib/appointments';
 
 interface DoctorAppointmentsTabProps {
   appointments: Appointment[];
@@ -44,9 +45,32 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'video' | 'clinic'>('all');
 
+  const rescheduleDateOptions = React.useMemo(() => {
+    const dates: { label: string; value: string }[] = [];
+    const now = new Date();
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      const isoValue = d.toISOString().split('T')[0];
+      const label = d.toLocaleDateString('en-IN', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata',
+      });
+      dates.push({ label, value: isoValue });
+    }
+    return dates;
+  }, []);
+
   // Interactive Modal States
   const [rescheduleModalAppt, setRescheduleModalAppt] = useState<Appointment | null>(null);
-  const [newDate, setNewDate] = useState('Tomorrow, Sep 12');
+  const [newDate, setNewDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
   const [newTime, setNewTime] = useState('02:30 PM');
 
   const [cancelModalAppt, setCancelModalAppt] = useState<Appointment | null>(null);
@@ -306,7 +330,7 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                     <div className="px-3 py-1.5 rounded-xl bg-[#FAF7EE] border border-[#DDD6C5] flex items-center gap-2">
                       <Clock className="w-3.5 h-3.5 text-teal-800 shrink-0" />
                       <div>
-                        <div className="text-xs font-bold text-[#032F31]">{appt.timeSlot}</div>
+                        <div className="text-xs font-bold text-[#032F31]">{formatTimeSlotRange(appt.timeSlot)}</div>
                         <div className="text-[10px] text-slate-500">{appt.date} (IST)</div>
                       </div>
                     </div>
@@ -474,10 +498,10 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   onChange={(e) => setNewDate(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-semibold"
                 >
-                  <option value="Today">Today (Sep 11)</option>
-                  <option value="Tomorrow, Sep 12">Tomorrow, Sep 12</option>
-                  <option value="Sep 13, 2026">Sunday, Sep 13, 2026</option>
-                  <option value="Sep 14, 2026">Monday, Sep 14, 2026</option>
+                  <option value="Today">Today</option>
+                  {rescheduleDateOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -490,11 +514,11 @@ export const DoctorAppointmentsTab: React.FC<DoctorAppointmentsTabProps> = ({
                   onChange={(e) => setNewTime(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-semibold"
                 >
-                  <option value="09:00 AM">09:00 AM</option>
-                  <option value="10:30 AM">10:30 AM</option>
-                  <option value="11:30 AM">11:30 AM</option>
-                  <option value="02:30 PM">02:30 PM</option>
-                  <option value="05:30 PM">05:30 PM</option>
+                  <option value="09:00 AM">09:00 AM – 09:30 AM</option>
+                  <option value="10:30 AM">10:30 AM – 11:00 AM</option>
+                  <option value="11:30 AM">11:30 AM – 12:00 PM</option>
+                  <option value="02:30 PM">02:30 PM – 03:00 PM</option>
+                  <option value="05:30 PM">05:30 PM – 06:00 PM</option>
                 </select>
                 <p className="text-[10px] text-amber-700 mt-1">
                   Note: Slots between 03:00 PM – 05:00 PM are excluded due to your configured afternoon break.

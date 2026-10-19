@@ -16,6 +16,8 @@ import { DoctorProfileModal } from './components/DoctorProfileModal';
 import { BookingPaymentModal } from './components/BookingPaymentModal';
 import { UserDashboardModal } from './components/UserDashboardModal';
 import { AuthModal } from './components/AuthModal';
+import { UnifiedAuthModal } from './components/UnifiedAuthModal';
+import type { AuthRole, AuthMode } from './components/UnifiedAuthModal';
 import { ReceiptModal } from './components/ReceiptModal';
 
 // Doctor Portal
@@ -30,8 +32,15 @@ import { AdminPortalView } from './components/AdminPortalView';
 import { INITIAL_DOCTORS } from './data/doctorsData';
 import { INITIAL_SCHEDULE_CONFIG, INITIAL_DOCTOR_APPOINTMENTS } from './data/doctorPortalData';
 import { Doctor, ConsultationType, Appointment, UserProfile, DoctorAuthData, DoctorScheduleConfig } from './types';
-import { fetchDoctors, fetchFeaturedDoctors } from './lib/doctors';
-import { fetchPatientAppointments, fetchDoctorAppointments, cancelAppointmentInDB, rescheduleAppointmentInDB } from './lib/appointments';
+import { fetchDoctors, fetchFeaturedDoctors, fetchSavedDoctorIds, saveDoctorInDB, removeSavedDoctorInDB } from './lib/doctors';
+import { 
+  fetchPatientAppointments, 
+  fetchDoctorAppointments, 
+  cancelAppointmentInDB, 
+  rescheduleAppointmentInDB,
+  deleteCancelledAppointmentInDB,
+  formatTimeSlotRange 
+} from './lib/appointments';
 
 
 export default function App() {
@@ -178,28 +187,79 @@ export default function App() {
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [loggedInAdmin, setLoggedInAdmin] = useState<AdminAuthData | null>(null);
 
-  // Saved Doctors State (persisted in localStorage)
-  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('medinest_saved_doctors');
-      return saved ? JSON.parse(saved) : [];
-    } catch (_) {
-      return [];
-    }
-  });
+  // -- Saved Doctors State (persisted per-user in MySQL + localStorage cache) -
+  // Key is strictly scoped to the authenticated user ID so each patient has an isolated list.
+  const getSavedDoctorsKey = (uid: string | undefined) =>
+    uid ? `medinest_saved_doctors_${uid}` : null;
 
-  const handleToggleSaveDoctor = (docId: string) => {
-    setSavedDoctorIds(prev => {
-      const exists = prev.includes(docId);
-      const next = exists ? prev.filter(id => id !== docId) : [...prev, docId];
+  const [savedDoctorIds, setSavedDoctorIds] = useState<string[]>([]);
+
+  // Reload saved-doctor IDs whenever the active patient identity changes.
+  // Fetches authoritative patient-specific saved doctors from MySQL backend.
+  useEffect(() => {
+    const uid = user.id || clerkUser?.id;
+    if (!uid || (!user.isLoggedIn && !isClerkSignedIn)) {
+      setSavedDoctorIds([]);
+      return;
+    }
+    const key = getSavedDoctorsKey(uid);
+    // Optimistically load cached data for this specific user
+    if (key) {
       try {
-        localStorage.setItem('medinest_saved_doctors', JSON.stringify(next));
+        const stored = localStorage.getItem(key);
+        if (stored) setSavedDoctorIds(JSON.parse(stored));
       } catch (_) {}
-      const targetDoc = doctors.find(d => d.id === docId) || INITIAL_DOCTORS.find(d => d.id === docId);
-      const name = targetDoc?.name || 'Doctor';
-      showToast(exists ? `Removed ${name} from saved doctors.` : `Saved ${name} to your dashboard.`);
-      return next;
+    }
+
+    // Fetch authoritative saved doctor list from backend MySQL
+    getToken().then(token => {
+      fetchSavedDoctorIds(uid, token || undefined).then(ids => {
+        if (Array.isArray(ids)) {
+          setSavedDoctorIds(ids);
+          if (key) {
+            try { localStorage.setItem(key, JSON.stringify(ids)); } catch (_) {}
+          }
+        }
+      });
+    }).catch(() => {
+      fetchSavedDoctorIds(uid).then(ids => {
+        if (Array.isArray(ids)) {
+          setSavedDoctorIds(ids);
+          if (key) {
+            try { localStorage.setItem(key, JSON.stringify(ids)); } catch (_) {}
+          }
+        }
+      });
     });
+  }, [user.id, user.isLoggedIn, clerkUser?.id, isClerkSignedIn, getToken]);
+
+  const handleToggleSaveDoctor = async (docId: string) => {
+    const uid = user.id || clerkUser?.id;
+    if (!uid) {
+      showToast('Please sign in to save doctors.');
+      return;
+    }
+    const exists = savedDoctorIds.includes(docId);
+    const next = exists ? savedDoctorIds.filter(id => id !== docId) : [...savedDoctorIds, docId];
+    setSavedDoctorIds(next);
+
+    const key = getSavedDoctorsKey(uid);
+    if (key) {
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch (_) {}
+    }
+
+    const targetDoc = doctors.find(d => d.id === docId) || INITIAL_DOCTORS.find(d => d.id === docId);
+    const name = targetDoc?.name || 'Doctor';
+    showToast(exists ? `Removed ${name} from saved doctors.` : `Saved ${name} to your dashboard.`);
+
+    let token: string | null = null;
+    try { token = await getToken(); } catch (_) {}
+
+    if (exists) {
+      await removeSavedDoctorInDB(docId, uid, token || undefined);
+    } else {
+      await saveDoctorInDB(docId, uid, token || undefined);
+    }
   };
 
   const [authCallbackNotice, setAuthCallbackNotice] = useState<string | null>(null);
@@ -210,7 +270,9 @@ export default function App() {
       if (loggedInAdmin) {
         setIsAdminPortalOpen(true);
       } else {
-        setIsAdminAuthModalOpen(true);
+        setUnifiedAuthRole('admin');
+        setUnifiedAuthMode('signin');
+        setIsUnifiedAuthOpen(true);
       }
     }
   }, [loggedInAdmin]);
@@ -315,6 +377,11 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'signin' | 'signup'>('signin');
   const [authCustomMessage, setAuthCustomMessage] = useState<string | null>(null);
+
+  // Unified Auth Modal state (replaces separate auth modals for navbar entry point)
+  const [isUnifiedAuthOpen, setIsUnifiedAuthOpen] = useState(false);
+  const [unifiedAuthRole, setUnifiedAuthRole] = useState<AuthRole>('patient');
+  const [unifiedAuthMode, setUnifiedAuthMode] = useState<AuthMode>('signin');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Auto-sync appointments when patient dashboard opens or every 3 seconds while open
@@ -394,8 +461,9 @@ export default function App() {
         slot: '10:30 AM'
       });
       setAuthCustomMessage(`Sign in or create an account to book an appointment with ${doctor.name}.`);
-      setAuthModalTab('signin');
-      setIsAuthModalOpen(true);
+      setUnifiedAuthRole('patient');
+      setUnifiedAuthMode('signin');
+      setIsUnifiedAuthOpen(true);
       return;
     }
 
@@ -420,8 +488,9 @@ export default function App() {
         slot: timeSlot
       });
       setAuthCustomMessage(`Sign in or create an account to book an appointment with ${doctor.name}.`);
-      setAuthModalTab('signin');
-      setIsAuthModalOpen(true);
+      setUnifiedAuthRole('patient');
+      setUnifiedAuthMode('signin');
+      setIsUnifiedAuthOpen(true);
       return;
     }
 
@@ -439,6 +508,7 @@ export default function App() {
 
     setUser(loggedInUser);
     setIsAuthModalOpen(false);
+    setIsUnifiedAuthOpen(false);
     setAuthCustomMessage(null);
 
     if (pendingBooking) {
@@ -474,14 +544,44 @@ export default function App() {
   };
 
   const handleRescheduleAppointment = async (id: string, newDate: string, newTime: string) => {
+    let displayDate = newDate;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      const parts = newDate.split('-');
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      displayDate = d.toLocaleDateString('en-IN', {
+        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata'
+      });
+    }
+
+    const formattedTime = formatTimeSlotRange(newTime, 30);
+
     setAppointments(prev =>
-      prev.map(a => a.id === id ? { ...a, date: newDate, timeSlot: newTime } : a)
+      prev.map(a => a.id === id ? { ...a, date: displayDate, timeSlot: formattedTime } : a)
     );
     let token: string | null = null;
     try { token = await getToken(); } catch (_) {}
     const patientId = user.id || clerkUser?.id;
-    await rescheduleAppointmentInDB(id, newDate, newTime, token || undefined, patientId);
-    showToast('Appointment rescheduled with updated time slot!');
+    try {
+      await rescheduleAppointmentInDB(id, newDate, newTime, token || undefined, patientId);
+      await loadPatientAppointments();
+      showToast('Appointment rescheduled with 30-minute slot!');
+    } catch (err: any) {
+      await loadPatientAppointments();
+      showToast(err?.message || 'Could not reschedule appointment. Please select another slot.');
+    }
+  };
+
+  const handleDeleteCancelledAppointment = async (id: string) => {
+    let token: string | null = null;
+    try { token = await getToken(); } catch (_) {}
+    const patientId = user.id || clerkUser?.id;
+    try {
+      await deleteCancelledAppointmentInDB(id, token || undefined, patientId);
+      setAppointments(prev => prev.filter(a => a.id !== id));
+      showToast('Cancelled appointment record dismissed.');
+    } catch (err: any) {
+      showToast(err?.message || 'Could not dismiss appointment record.');
+    }
   };
 
   const handleViewReceipt = (appt: Appointment) => {
@@ -498,7 +598,9 @@ export default function App() {
     if (loggedInDoctor) {
       setIsDoctorPortalOpen(true);
     } else {
-      setIsDoctorAuthModalOpen(true);
+      setUnifiedAuthRole('doctor');
+      setUnifiedAuthMode('signin');
+      setIsUnifiedAuthOpen(true);
     }
   };
 
@@ -511,6 +613,7 @@ export default function App() {
     setLoggedInDoctor(doctorData);
     setIsDoctorPortalOpen(true);
     setIsDoctorAuthModalOpen(false);
+    setIsUnifiedAuthOpen(false);
     showToast(`Welcome, ${doctorData.name}! Doctor Portal active.`);
   };
 
@@ -537,7 +640,9 @@ export default function App() {
     if (loggedInAdmin) {
       setIsAdminPortalOpen(true);
     } else {
-      setIsAdminAuthModalOpen(true);
+      setUnifiedAuthRole('admin');
+      setUnifiedAuthMode('signin');
+      setIsUnifiedAuthOpen(true);
     }
   };
 
@@ -550,6 +655,7 @@ export default function App() {
     setLoggedInAdmin(admin);
     setIsAdminPortalOpen(true);
     setIsAdminAuthModalOpen(false);
+    setIsUnifiedAuthOpen(false);
     showToast(`Welcome, ${admin.name}! Admin Portal active.`);
   };
 
@@ -635,10 +741,11 @@ export default function App() {
         onSelectCity={setSelectedCity}
         onOpenSymptomChecker={() => setIsSymptomCheckerOpen(true)}
         onOpenDashboard={() => setIsDashboardOpen(true)}
-        onOpenAuth={(tab = 'signin') => {
-          setAuthModalTab(tab);
-          setAuthCustomMessage(null); // clear any stale booking message when user explicitly opens auth
-          setIsAuthModalOpen(true);
+        onOpenAuth={(tab = 'signin', role = 'patient') => {
+          setUnifiedAuthRole(role);
+          setUnifiedAuthMode(tab);
+          setAuthCustomMessage(null);
+          setIsUnifiedAuthOpen(true);
         }}
         onOpenDoctorPortal={handleOpenDoctorPortal}
         onOpenAdminPortal={handleOpenAdminPortal}
@@ -711,6 +818,7 @@ export default function App() {
             setSelectedSpecialty(specId);
             scrollToSection('doctors-section');
           }}
+          userId={clerkUser?.id || (user.isLoggedIn ? (user as any).id : undefined)}
         />
       )}
 
@@ -758,6 +866,7 @@ export default function App() {
           onToggleSaveDoctor={handleToggleSaveDoctor}
           onCancelAppointment={handleCancelAppointment}
           onRescheduleAppointment={handleRescheduleAppointment}
+          onDeleteCancelledAppointment={handleDeleteCancelledAppointment}
           onViewReceipt={handleViewReceipt}
           onBookDoctorAgain={handleDirectBook}
           onRefreshAppointments={loadPatientAppointments}
@@ -768,6 +877,7 @@ export default function App() {
             } catch (_) {}
             setUser({ name: 'Guest Patient', phone: '', email: '', isLoggedIn: false });
             setAppointments([]);
+            setSavedDoctorIds([]);
             localStorage.removeItem('mediconnect_appointments');
             if (activeId) {
               localStorage.removeItem(`mediconnect_appointments_${activeId}`);
@@ -811,7 +921,7 @@ export default function App() {
         />
       )}
 
-      {/* 8. Admin Auth Modal */}
+      {/* 8. Admin Auth Modal (kept for backward compat / direct calls) */}
       {isAdminAuthModalOpen && (
         <AdminAuthModal
           isOpen={isAdminAuthModalOpen}
@@ -819,6 +929,39 @@ export default function App() {
           onAdminLoginSuccess={handleAdminLoginSuccess}
         />
       )}
+
+      {/* 9. Unified Auth Modal — primary entry point for all roles via Navbar */}
+      {isUnifiedAuthOpen && (
+        <UnifiedAuthModal
+          isOpen={isUnifiedAuthOpen}
+          onClose={() => {
+            setIsUnifiedAuthOpen(false);
+            setAuthCustomMessage(null);
+          }}
+          initialRole={unifiedAuthRole}
+          initialMode={unifiedAuthMode}
+          customMessage={authCustomMessage}
+          onPatientLoginSuccess={handlePatientLoginSuccess}
+          onDoctorLoginSuccess={handleDoctorLoginSuccess}
+          onAdminLoginSuccess={handleAdminLoginSuccess}
+        />
+      )}
+
+      {/* 9. Floating MediNest AI Health Assistant Action Button */}
+      <button
+        type="button"
+        onClick={() => setIsSymptomCheckerOpen(true)}
+        className="fixed bottom-6 right-6 z-40 bg-[#0C182B] hover:bg-[#162D50] text-white p-3.5 sm:px-5 sm:py-3.5 rounded-full shadow-2xl border border-teal-500/40 hover:border-teal-400 transition-all flex items-center gap-2.5 group cursor-pointer hover:scale-105 active:scale-95"
+        title="Consult MediNest AI Assistant"
+      >
+        <span className="relative flex h-3 w-3">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-teal-500"></span>
+        </span>
+        <span className="hidden sm:inline font-bold text-xs tracking-wide">
+          MediNest AI Assistant
+        </span>
+      </button>
     </div>
   );
 }

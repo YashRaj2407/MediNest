@@ -57,7 +57,7 @@ export const DoctorPrescriptionModal: React.FC<DoctorPrescriptionModalProps> = (
     setIsSaved(false);
   }, [appointment, isOpen]);
 
-  const docName = doctor?.name || appointment.doctorName || 'Dr. Rohan Gupta';
+  const docName = doctor?.name || appointment.doctorName || 'Consulting Physician';
   const docSpecialty = doctor?.specialty || appointment.doctorSpecialty || 'General Physician';
   const docQuals = ('qualifications' in (doctor || {}) && (doctor as any).qualifications)
     ? (doctor as any).qualifications 

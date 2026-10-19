@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { Doctor, ConsultationType, Appointment, UserProfile } from '../types';
 import { DoctorAvatar } from './DoctorAvatar';
-import { computeSlotEndTime } from '../lib/appointments';
+import { computeSlotEndTime, formatTimeSlotRange } from '../lib/appointments';
 import {
   loadRazorpayScript,
   createRazorpayOrder,
@@ -122,13 +122,11 @@ export const BookingPaymentModal: React.FC<BookingPaymentModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [step, onClose]);
 
-  /** Compute time slot parts */
+  /** Compute time slot parts strictly lasting 30 minutes */
   const getSlotTimes = () => {
-    const timeParts = selectedTimeSlot.split('–').map(s => s.trim());
+    const timeParts = selectedTimeSlot.split(/\s*[–-]\s*/).map(s => s.trim());
     const startTime = timeParts[0] || selectedTimeSlot;
-    const endTime = timeParts[1] && timeParts[1] !== '05:00 PM'
-      ? timeParts[1]
-      : computeSlotEndTime(startTime, 30);
+    const endTime = computeSlotEndTime(startTime, 30);
     return { startTime, endTime };
   };
 
@@ -331,7 +329,7 @@ END:VCALENDAR`;
           </h2>
 
           <p className="text-xs text-slate-300 mt-0.5">
-            {doctor.name} • {doctor.specialty} • {selectedDate} at {selectedTimeSlot}
+            {doctor.name} • {doctor.specialty} • {selectedDate} at {formatTimeSlotRange(selectedTimeSlot)}
           </p>
 
           {/* Stepper Indicator */}
@@ -380,7 +378,7 @@ END:VCALENDAR`;
 
                 <div className="text-right">
                   <span className="text-[10px] text-slate-400 block font-medium">Slot</span>
-                  <span className="text-xs font-bold text-[#0C182B] block">{selectedTimeSlot}</span>
+                  <span className="text-xs font-bold text-[#0C182B] block">{formatTimeSlotRange(selectedTimeSlot)}</span>
                   <span className="text-[11px] text-slate-500">{selectedDate.split(',')[0]}</span>
                 </div>
               </div>

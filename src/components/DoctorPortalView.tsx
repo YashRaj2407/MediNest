@@ -25,7 +25,7 @@ import {
 import { formatINR } from '../lib/formatCurrency';
 import { DoctorAuthData, DoctorScheduleConfig, Appointment, Prescription } from '../types';
 import { useAuth } from '@clerk/clerk-react';
-import { completeAppointmentInDB } from '../lib/appointments';
+import { completeAppointmentInDB, formatTimeSlotRange } from '../lib/appointments';
 import { DoctorScheduleTab } from './doctor/DoctorScheduleTab';
 import { DoctorAppointmentsTab } from './doctor/DoctorAppointmentsTab';
 import { DoctorPatientsTab } from './doctor/DoctorPatientsTab';
@@ -144,8 +144,9 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
   };
 
   const handleReschedule = (appointmentId: string, newDate: string, newTime: string) => {
+    const formattedSlot = formatTimeSlotRange(newTime);
     const updated = appointments.map(a => 
-      a.id === appointmentId ? { ...a, date: newDate, timeSlot: newTime, status: 'upcoming' as const } : a
+      a.id === appointmentId ? { ...a, date: newDate, timeSlot: formattedSlot, status: 'upcoming' as const } : a
     );
     onUpdateAppointments(updated);
   };
@@ -479,7 +480,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
                         Next Up
                       </span>
                       <span className="text-xs font-bold text-slate-500">
-                        {nextUpAppointment.date} • {nextUpAppointment.timeSlot}
+                        {nextUpAppointment.date} • {formatTimeSlotRange(nextUpAppointment.timeSlot)}
                       </span>
                     </div>
                     <h3 className="text-lg font-extrabold text-[#032F31]">
@@ -554,7 +555,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
                   >
                     <div className="flex items-center gap-3">
                       <div className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-extrabold text-[#032F31] font-mono shrink-0">
-                        {appt.timeSlot}
+                        {formatTimeSlotRange(appt.timeSlot)}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -624,6 +625,7 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
         {activeTab === 'patients' && (
           <DoctorPatientsTab
             appointments={appointments}
+            doctorName={doctor.name}
             onOpenPrescription={(appt) => setActivePrescriptionAppt(appt)}
           />
         )}
@@ -651,6 +653,8 @@ export const DoctorPortalView: React.FC<DoctorPortalViewProps> = ({
         <DoctorVideoRoomModal
           isOpen={!!activeVideoAppt}
           appointment={activeVideoAppt}
+          doctorName={doctor.name}
+          doctorPhoto={doctor.photo}
           onClose={() => setActiveVideoAppt(null)}
           onCompleteAndPrescribe={handleCompleteAndPrescribe}
         />

@@ -39,7 +39,7 @@ export const SpecialtyGrid: React.FC<SpecialtyGridProps> = ({
   );
 
   return (
-    <section id="services-section" className="py-12 sm:py-16 bg-[#FAF7EE]">
+    <section id="specialties-section" className="py-12 sm:py-16 bg-[#FAF7EE]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Dark Teal Rounded Section from Screenshot 2 */}
         <div className="rounded-[32px] sm:rounded-[40px] bg-[#032F31] text-white p-6 sm:p-10 lg:p-16 relative overflow-hidden shadow-xl">

@@ -26,6 +26,7 @@ import { Appointment, Doctor, UserProfile } from '../types';
 import { DoctorAvatar } from './DoctorAvatar';
 import { generatePrescriptionPDF, getEffectivePrescription } from '../lib/prescriptions';
 import { ReportDoctorModal } from './ReportDoctorModal';
+import { computeSlotEndTime, formatTimeSlotRange } from '../lib/appointments';
 
 
 interface UserDashboardModalProps {
@@ -36,6 +37,7 @@ interface UserDashboardModalProps {
   savedDoctors: Doctor[];
   onCancelAppointment: (appointmentId: string) => void;
   onRescheduleAppointment: (appointmentId: string, newDate: string, newTime: string) => void;
+  onDeleteCancelledAppointment?: (appointmentId: string) => void;
   onViewReceipt: (appointment: Appointment) => void;
   onBookDoctorAgain: (doctor: Doctor) => void;
   onLogout: () => void;
@@ -51,6 +53,7 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
   savedDoctors,
   onCancelAppointment,
   onRescheduleAppointment,
+  onDeleteCancelledAppointment,
   onViewReceipt,
   onBookDoctorAgain,
   onLogout,
@@ -59,9 +62,38 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'payments' | 'saved'>('upcoming');
+  // Generate the next 7 available rescheduling dates from today, using ISO YYYY-MM-DD values
+  // so the backend receives a well-formed date and never misparses month-only strings as year 2001.
+  const generateRescheduleDates = () => {
+    const dates: { label: string; value: string }[] = [];
+    const now = new Date();
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      const isoValue = d.toISOString().split('T')[0]; // YYYY-MM-DD
+      const label = d.toLocaleDateString('en-IN', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata',
+      });
+      dates.push({ label, value: isoValue });
+    }
+    return dates;
+  };
+
+  const rescheduleDateOptions = generateRescheduleDates();
+  const defaultRescheduleDate = rescheduleDateOptions[0]?.value ?? new Date().toISOString().split('T')[0];
+
+  const rescheduleSlotOptions = [
+    '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
+    '12:00 PM', '12:30 PM', '02:00 PM', '02:30 PM', '05:00 PM', '05:30 PM'
+  ];
+
+  const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'cancelled' | 'payments' | 'saved'>('upcoming');
   const [reschedulingApptId, setReschedulingApptId] = useState<string | null>(null);
-  const [rescheduleDate, setRescheduleDate] = useState('Tomorrow, Sep 12');
+  const [rescheduleDate, setRescheduleDate] = useState(defaultRescheduleDate);
   const [rescheduleSlot, setRescheduleSlot] = useState('11:00 AM');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [viewRxAppt, setViewRxAppt] = useState<Appointment | null>(null);
@@ -85,9 +117,14 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
     a => a.status !== 'completed' && a.status !== 'cancelled'
   );
 
-  // Past Consultations: completed and terminal records
-  const pastAppointments = uniqueAppointments.filter(
-    a => a.status === 'completed' || a.status === 'cancelled'
+  // Past Consultations: exclusively completed genuine medical consultations
+  const completedAppointments = uniqueAppointments.filter(
+    a => a.status === 'completed'
+  );
+
+  // Cancelled Records: isolated to prevent cluttering completed medical consultation history
+  const cancelledAppointments = uniqueAppointments.filter(
+    a => a.status === 'cancelled'
   );
 
   const handleConfirmReschedule = (id: string) => {
@@ -176,7 +213,19 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              Past Consultations ({pastAppointments.length})
+              Past Consultations ({completedAppointments.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('cancelled')}
+              className={`py-3.5 border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'cancelled'
+                  ? 'border-[#0C182B] text-[#0C182B]'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Cancelled ({cancelledAppointments.length})
             </button>
 
             <button
@@ -275,7 +324,7 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                         <div className="p-3 rounded-xl bg-slate-50">
                           <span className="text-[10px] font-bold text-slate-400 block mb-0.5 uppercase">Schedule</span>
                           <div className="font-bold text-slate-800">{appt.date}</div>
-                          <div className="text-slate-600 font-medium">{appt.timeSlot}</div>
+                          <div className="text-slate-600 font-medium">{formatTimeSlotRange(appt.timeSlot)}</div>
                         </div>
 
                         <div className="p-3 rounded-xl bg-slate-50">
@@ -364,19 +413,20 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                               onChange={(e) => setRescheduleDate(e.target.value)}
                               className="p-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white"
                             >
-                              <option value="Tomorrow, Sep 12">Tomorrow, Sep 12</option>
-                              <option value="Friday, Sep 13">Friday, Sep 13</option>
-                              <option value="Saturday, Sep 14">Saturday, Sep 14</option>
+                              {rescheduleDateOptions.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
                             </select>
                             <select
                               value={rescheduleSlot}
                               onChange={(e) => setRescheduleSlot(e.target.value)}
                               className="p-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white"
                             >
-                              <option value="10:00 AM">10:00 AM</option>
-                              <option value="11:30 AM">11:30 AM</option>
-                              <option value="03:00 PM">03:00 PM</option>
-                              <option value="05:30 PM">05:30 PM</option>
+                              {rescheduleSlotOptions.map(slot => (
+                                <option key={slot} value={slot}>
+                                  {slot} – {computeSlotEndTime(slot, 30)}
+                                </option>
+                              ))}
                             </select>
                           </div>
                           <button
@@ -447,8 +497,8 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
           {/* TAB 2: PAST CONSULTATIONS */}
           {activeTab === 'past' && (
             <div className="space-y-4">
-              {pastAppointments.length > 0 ? (
-                pastAppointments.map((appt) => (
+              {completedAppointments.length > 0 ? (
+                completedAppointments.map((appt) => (
                   <div
                     key={appt.id}
                     className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
@@ -463,15 +513,11 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                       />
                       <div>
                         <div className="text-xs font-bold text-slate-900">{appt.doctorName}</div>
-                        <div className="text-[11px] text-slate-500">{appt.doctorSpecialty} • {appt.date}</div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                          appt.status === 'completed'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : appt.status === 'cancelled'
-                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          {appt.status.toUpperCase()}
+                        <div className="text-[11px] text-slate-500">
+                          {appt.doctorSpecialty} • {appt.date} • {formatTimeSlotRange(appt.timeSlot)}
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 inline-block mt-0.5">
+                          COMPLETED
                         </span>
                       </div>
                     </div>
@@ -512,14 +558,88 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                       </button>
                     </div>
                   </div>
-
                 ))
               ) : (
                 <div className="p-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
                   <Clock className="w-8 h-8 text-slate-400 mx-auto" />
                   <h4 className="text-sm font-bold text-slate-800">No Past Consultations</h4>
                   <p className="text-xs text-slate-500">
-                    You have no past consultation history on record for this account.
+                    You have no past completed consultation history on record for this account.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: CANCELLED CONSULTATIONS */}
+          {activeTab === 'cancelled' && (
+            <div className="space-y-4">
+              {cancelledAppointments.length > 0 ? (
+                cancelledAppointments.map((appt) => (
+                  <div
+                    key={appt.id}
+                    className="p-4 rounded-2xl bg-rose-50/50 border border-rose-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <DoctorAvatar
+                        photo={appt.doctorPhoto}
+                        name={appt.doctorName}
+                        className="w-10 h-10 rounded-xl border border-rose-200"
+                        imgClassName="w-full h-full object-cover object-top"
+                        theme="light"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-slate-900">{appt.doctorName}</div>
+                        <div className="text-[11px] text-slate-600">
+                          {appt.doctorSpecialty} • {appt.date} • {formatTimeSlotRange(appt.timeSlot)}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300">
+                            CANCELLED
+                          </span>
+                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            ✓ 100% Refund (₹{appt.totalINR}) Processed
+                          </span>
+                        </div>
+                        {appt.cancellationReason && (
+                          <p className="text-[10px] text-slate-500 mt-1 italic">
+                            Reason: {appt.cancellationReason}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onViewReceipt(appt)}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        Refund Receipt (₹{appt.totalINR})
+                      </button>
+                      {onDeleteCancelledAppointment && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm('Dismiss this cancelled appointment record from your dashboard view? Real payment and refund audit records remain permanently safe.')) {
+                              onDeleteCancelledAppointment(appt.id);
+                            }
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-100 text-xs font-bold text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Dismiss cancelled record"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Dismiss
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                  <h4 className="text-sm font-bold text-slate-800">No Cancelled Consultations</h4>
+                  <p className="text-xs text-slate-500">
+                    You have no cancelled appointments. All scheduled appointments are active or successfully completed.
                   </p>
                 </div>
               )}

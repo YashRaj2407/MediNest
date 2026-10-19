@@ -7,6 +7,7 @@ import {
   savePrescription,
   cancelAppointment,
   rescheduleAppointment,
+  deleteAppointment,
   subscribeAppointmentEvents,
 } from '../controllers/appointmentsController.js';
 
@@ -18,6 +19,7 @@ router.get('/doctor/:doctorId', getDoctorAppointments);
 router.patch('/:id/complete', requireAuth, completeAppointment);
 router.patch('/:id/cancel', requireAuth, cancelAppointment);
 router.patch('/:id/reschedule', requireAuth, rescheduleAppointment);
+router.delete('/:id', requireAuth, deleteAppointment);
 router.post('/:id/prescription', requireAuth, savePrescription);
 
 export default router;

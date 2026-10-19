@@ -190,15 +190,9 @@ export function buildAppointmentPayload(
   const dateObj = resolveDate(payload.date);
   const { h: sh, m: sm } = parseTimeStr(payload.timeSlot);
 
-  const slotEnd = payload.timeSlotEnd && payload.timeSlotEnd !== '05:00 PM'
-    ? payload.timeSlotEnd
-    : computeSlotEndTime(payload.timeSlot, 30);
-  const { h: eh, m: em } = parseTimeStr(slotEnd);
-
   const startDT = new Date(dateObj);
   startDT.setHours(sh, sm, 0, 0);
-  const endDT = new Date(dateObj);
-  endDT.setHours(eh, em, 0, 0);
+  const endDT = new Date(startDT.getTime() + 30 * 60 * 1000);
 
   return {
     id: appointmentId,

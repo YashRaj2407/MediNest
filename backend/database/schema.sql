@@ -220,5 +220,21 @@ CREATE TABLE notifications (
   CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- 10. SAVED DOCTORS (Patient Bookmarks / Favorites)
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS saved_doctors;
+CREATE TABLE saved_doctors (
+  id          VARCHAR(36)  NOT NULL, -- UUID string
+  patient_id  VARCHAR(255) NOT NULL, -- FK -> profiles.id
+  doctor_id   VARCHAR(36)  NOT NULL, -- FK -> doctor_profiles.id
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_patient_doctor (patient_id, doctor_id),
+  INDEX idx_saved_patient (patient_id),
+  INDEX idx_saved_doctor (doctor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;

@@ -106,7 +106,7 @@ export const Footer: React.FC<FooterProps> = ({
                 </button>
               </li>
               <li><a href="#about-section" className="hover:text-white transition-colors">About Us</a></li>
-              <li><a href="#services-section" className="hover:text-white transition-colors">Services</a></li>
+              <li><a href="#specialties-section" className="hover:text-white transition-colors">Services</a></li>
               <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
               <li><a href="#doctors-section" className="hover:text-white transition-colors">Find Doctors</a></li>
               <li><a href="#reviews-section" className="hover:text-white transition-colors">Patient Reviews</a></li>

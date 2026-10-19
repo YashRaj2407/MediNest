@@ -19,6 +19,8 @@ import { Appointment } from '../../types';
 interface DoctorVideoRoomModalProps {
   isOpen: boolean;
   appointment: Appointment | null;
+  doctorName?: string;
+  doctorPhoto?: string;
   onClose: () => void;
   onCompleteAndPrescribe: (appointmentId: string) => void;
 }
@@ -26,6 +28,8 @@ interface DoctorVideoRoomModalProps {
 export const DoctorVideoRoomModal: React.FC<DoctorVideoRoomModalProps> = ({
   isOpen,
   appointment,
+  doctorName,
+  doctorPhoto,
   onClose,
   onCompleteAndPrescribe
 }) => {
@@ -108,8 +112,8 @@ export const DoctorVideoRoomModal: React.FC<DoctorVideoRoomModalProps> = ({
               <div className="absolute top-4 right-4 w-36 sm:w-44 aspect-[4/3] rounded-xl overflow-hidden border-2 border-teal-500 shadow-xl bg-slate-900">
                 {!isVideoOff ? (
                   <img
-                    src="https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=400"
-                    alt="Dr. Rohan Gupta Feed"
+                    src={doctorPhoto || "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=400"}
+                    alt={`${doctorName || appointment.doctorName || 'Doctor'} Feed`}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -119,7 +123,7 @@ export const DoctorVideoRoomModal: React.FC<DoctorVideoRoomModalProps> = ({
                   </div>
                 )}
                 <div className="absolute bottom-1 left-2 text-[10px] font-bold text-white bg-black/50 px-1.5 py-0.5 rounded">
-                  You (Dr. Rohan Gupta)
+                  You ({doctorName || appointment.doctorName || 'Doctor'})
                 </div>
               </div>
             </div>

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import { Appointment } from '../types';
-import { genReceiptNumber } from './appointments';
+import { genReceiptNumber, formatTimeSlotRange } from './appointments';
 
 /**
  * Generates and downloads a real PDF receipt for an appointment using jsPDF.
@@ -123,7 +123,7 @@ export function generateReceiptPDF(appointment: Appointment): void {
 
   const details: [string, string][] = [
     ['Appointment Date:', appointment.date],
-    ['Selected Time Slot:', appointment.timeSlot],
+    ['Selected Time Slot:', formatTimeSlotRange(appointment.timeSlot)],
     ['Consultation Mode:', appointment.appointmentType === 'video' ? 'HD Tele-Consultation (Online)' : 'In-Person Clinic Visit'],
     ['Payment Method / Txn ID:', `${appointment.paymentMethod}  •  ${appointment.paymentTransactionId}`],
   ];

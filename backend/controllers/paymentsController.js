@@ -29,6 +29,20 @@ function toMySQLDatetime(dateVal) {
 }
 
 /**
+ * Helper: Add minutes to a MySQL 'YYYY-MM-DD HH:MM:SS' string.
+ * Strictly calculates using pure arithmetic to avoid timezone shifts.
+ */
+function addMinutesToMySQLDatetime(dtStr, minutes = 30) {
+  if (!dtStr) return null;
+  const [d, t] = dtStr.split(' ');
+  const [y, m, day] = d.split('-').map(Number);
+  const [hh, mm, ss] = (t || '00:00:00').split(':').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, day, 0, hh * 60 + mm + minutes, ss || 0));
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(dt.getUTCFullYear())}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`;
+}
+
+/**
  * POST /api/v1/payments/create-order
  * Creates a Razorpay order and holds the requested slot in MySQL.
  */
@@ -254,9 +268,9 @@ export async function verifyRazorpayPayment(req, res) {
       }
     }
 
-    // 4. Format datetimes
+    // 4. Format datetimes — end time is strictly computed as start time + 30 minutes
     const startDT = toMySQLDatetime(appointment.start_datetime) || toMySQLDatetime(new Date());
-    const endDT = toMySQLDatetime(appointment.end_datetime) || toMySQLDatetime(new Date(Date.now() + 30 * 60 * 1000));
+    const endDT = addMinutesToMySQLDatetime(startDT, 30);
 
     // 5. Insert Appointment Record
     console.log(`[Appointment Insert] Persisting appointment=${appointment.id} for doctor=${appointment.doctor_id}`);

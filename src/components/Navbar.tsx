@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Phone, 
   ShieldCheck, 
@@ -10,7 +10,10 @@ import {
   X,
   Stethoscope,
   Shield,
-  ChevronDown
+  ChevronDown,
+  Info,
+  HelpCircle,
+  HeartHandshake
 } from 'lucide-react';
 import { INDIAN_CITIES } from '../data/specialtiesData';
 import { UserProfile } from '../types';
@@ -21,7 +24,7 @@ interface NavbarProps {
   onSelectCity: (city: string) => void;
   onOpenSymptomChecker: () => void;
   onOpenDashboard: () => void;
-  onOpenAuth: (initialTab?: 'signin' | 'signup') => void;
+  onOpenAuth: (initialTab?: 'signin' | 'signup', initialRole?: 'patient' | 'doctor' | 'admin') => void;
   onOpenDoctorPortal: () => void;
   onOpenAdminPortal?: () => void;
   onNavigateToSection: (sectionId: string) => void;
@@ -44,15 +47,40 @@ export const Navbar: React.FC<NavbarProps> = ({
   user,
   upcomingCount,
   isDoctorLoggedIn = false,
-  doctorName = 'Dr. Rohan Gupta',
+  doctorName = 'Doctor',
   isAdminLoggedIn = false
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close More dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moreDropdownRef.current && !moreDropdownRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Determine primary Account button action and label when authenticated
+  const handleAccountClick = () => {
+    if (isDoctorLoggedIn) {
+      onOpenDoctorPortal();
+    } else if (isAdminLoggedIn && onOpenAdminPortal) {
+      onOpenAdminPortal();
+    } else if (user.isLoggedIn) {
+      onOpenDashboard();
+    } else {
+      onOpenAuth('signin', 'patient');
+    }
+  };
 
   return (
     <header className="sticky top-0 z-40 w-full bg-[#FAF7EE]/95 backdrop-blur-md border-b border-[#E8E3D7] transition-all box-border">
-      {/* Emergency Helpline Top Banner */}
+      {/* ── Emergency Helpline Top Banner ─────────────────────────────────── */}
       <div className="bg-[#032F31] text-slate-200 text-xs py-2 px-4 border-b border-[#0b4345] w-full box-border">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -83,136 +111,146 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Main Navigation Bar — Exact Order: Logo, Find Doctors, How It Works, Services, Symptom Checker, Doctor Portal, Admin, Sign In, Sign Up, Book Now */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-5 lg:px-6 w-full box-border">
-        <div className="flex items-center justify-between h-20 gap-2 xl:gap-3 box-border">
+      {/* ── Main Navigation Bar ───────────────────────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full box-border">
+        <div className="flex items-center justify-between h-20 gap-4 box-border">
           
-          {/* 1. Logo / MediNest */}
+          {/* 1. Left Section: Logo & Brand */}
           <div className="flex items-center shrink-0">
             <button 
+              type="button"
               onClick={() => onNavigateToSection('hero')} 
-              className="flex items-center gap-2 text-left focus:outline-none group cursor-pointer"
+              className="flex items-center gap-2.5 text-left focus:outline-none group cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-2xl bg-[#032F31] flex items-center justify-center text-[#FAE58D] shadow-sm group-hover:scale-105 transition-transform p-1.5 shrink-0">
+              <div className="w-10 h-10 rounded-2xl bg-[#032F31] flex items-center justify-center text-[#FAE58D] shadow-sm group-hover:scale-105 transition-transform p-2 shrink-0">
                 <span className="flex items-center justify-center w-full h-full">
                   <MediNestLogo variant="gold" className="w-5 h-5" />
                 </span>
               </div>
               <div>
-                <span className="text-lg font-bold tracking-tight text-[#032F31] font-display block leading-none whitespace-nowrap">
+                <span className="text-xl font-bold tracking-tight text-[#032F31] font-display block leading-none whitespace-nowrap">
                   MediNest
                 </span>
-                <span className="text-[9px] font-semibold tracking-wider uppercase text-teal-800/80 block mt-1 whitespace-nowrap">
+                <span className="text-[10px] font-semibold tracking-wider uppercase text-teal-800/80 block mt-1 whitespace-nowrap">
                   Healthcare
                 </span>
               </div>
             </button>
           </div>
 
-          {/* Desktop Nav Links (Order 2 - 7) */}
-          <nav className="hidden md:flex items-center gap-2.5 xl:gap-3.5 2xl:gap-4.5 text-xs lg:text-sm font-medium text-slate-700 shrink-0">
-            {/* 2. Find Doctors */}
+          {/* 2. Center Section: Navigation Items */}
+          <nav className="hidden md:flex items-center gap-5 lg:gap-7 text-xs lg:text-sm font-medium text-slate-700">
+            {/* Find Doctors */}
             <button 
+              type="button"
               onClick={() => onNavigateToSection('doctors-section')} 
-              className="hover:text-[#032F31] transition-colors cursor-pointer py-1 font-semibold text-[#032F31] whitespace-nowrap shrink-0"
+              className="hover:text-[#032F31] transition-colors cursor-pointer py-1 font-semibold text-[#032F31] whitespace-nowrap"
             >
               Find Doctors
             </button>
 
-            {/* 3. How It Works */}
+            {/* How It Works (visible directly on large desktop screens) */}
             <button 
+              type="button"
               onClick={() => onNavigateToSection('how-it-works')} 
-              className="hidden xl:block hover:text-[#032F31] transition-colors cursor-pointer py-1 whitespace-nowrap shrink-0"
+              className="hidden lg:block hover:text-[#032F31] transition-colors cursor-pointer py-1 whitespace-nowrap"
             >
               How It Works
             </button>
 
-            {/* 4. Services */}
-            <button 
-              onClick={() => onNavigateToSection('services-section')} 
-              className="hidden xl:block hover:text-[#032F31] transition-colors cursor-pointer py-1 whitespace-nowrap shrink-0"
-            >
-              Services
-            </button>
-
-            {/* Dropdown for medium screen widths (md & lg) to hold How It Works / Services */}
-            <div className="relative xl:hidden">
+            {/* More Dropdown */}
+            <div className="relative" ref={moreDropdownRef}>
               <button
                 type="button"
                 onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-                className="hover:text-[#032F31] transition-colors cursor-pointer py-1 font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
+                className="hover:text-[#032F31] transition-colors cursor-pointer py-1 font-semibold flex items-center gap-1 whitespace-nowrap"
+                aria-expanded={moreMenuOpen}
               >
-                More <ChevronDown className="w-3.5 h-3.5" />
+                <span>More</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${moreMenuOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {moreMenuOpen && (
-                <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-fadeIn space-y-1">
+                <div className="absolute top-full left-0 mt-2.5 w-56 bg-white rounded-2xl shadow-xl border border-slate-200/80 py-2.5 z-50 animate-fadeIn space-y-1">
                   <button
-                    onClick={() => { onNavigateToSection('how-it-works'); setMoreMenuOpen(false); }}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#032F31] whitespace-nowrap"
+                    type="button"
+                    onClick={() => { onNavigateToSection('about-section'); setMoreMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50/70 hover:text-[#032F31] transition-colors flex items-center gap-2 cursor-pointer"
                   >
-                    How It Works
+                    <Info className="w-3.5 h-3.5 text-teal-700" />
+                    <span>About MediNest</span>
                   </button>
                   <button
-                    onClick={() => { onNavigateToSection('services-section'); setMoreMenuOpen(false); }}
-                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#032F31] whitespace-nowrap"
+                    type="button"
+                    onClick={() => { onNavigateToSection('how-it-works'); setMoreMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50/70 hover:text-[#032F31] transition-colors flex items-center gap-2 cursor-pointer"
                   >
-                    Services
+                    <HeartHandshake className="w-3.5 h-3.5 text-teal-700" />
+                    <span>How It Works</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onNavigateToSection('specialties-section'); setMoreMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50/70 hover:text-[#032F31] transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+                    <span>Clinical Specialties</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onNavigateToSection('faq-section'); setMoreMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50/70 hover:text-[#032F31] transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-teal-700" />
+                    <span>Frequently Asked Questions</span>
                   </button>
                 </div>
               )}
             </div>
 
-            {/* 5. Symptom Checker */}
+            {/* Symptom Checker */}
             <button 
+              type="button"
               onClick={onOpenSymptomChecker}
-              className="inline-flex items-center gap-1 text-[#032F31] hover:text-black font-semibold px-2.5 py-1 rounded-full bg-[#EAE4D4] hover:bg-[#DDD6C5] transition-all cursor-pointer text-xs whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 text-[#032F31] hover:text-black font-semibold px-3 py-1.5 rounded-full bg-[#EAE4D4] hover:bg-[#DDD6C5] transition-all cursor-pointer text-xs whitespace-nowrap"
             >
-              <Sparkles className="w-3 h-3 text-teal-800" />
-              Symptom Checker
+              <Sparkles className="w-3.5 h-3.5 text-teal-800" />
+              <span>Symptom Checker</span>
             </button>
-
-            {/* 6. Doctor Portal — Hide if Patient is logged in */}
-            {(!user.isLoggedIn || isDoctorLoggedIn) && (
-              <button
-                onClick={onOpenDoctorPortal}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                  isDoctorLoggedIn
-                    ? 'bg-[#032F31] text-[#FAE58D] hover:bg-[#074749]'
-                    : 'text-teal-800 hover:text-[#032F31] border border-teal-200 hover:border-teal-700 bg-teal-50 hover:bg-teal-100'
-                }`}
-              >
-                <Stethoscope className="w-3.5 h-3.5" />
-                {isDoctorLoggedIn ? doctorName?.split(' ')[1] || 'Doctor Portal' : 'Doctor Portal'}
-              </button>
-            )}
-
-            {/* 7. Admin — Hide if Patient is logged in */}
-            {onOpenAdminPortal && (!user.isLoggedIn || isAdminLoggedIn) && (
-              <button
-                onClick={onOpenAdminPortal}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                  isAdminLoggedIn
-                    ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
-                    : 'text-slate-600 hover:text-slate-900 border border-slate-300 hover:border-slate-400 bg-slate-100/80'
-                }`}
-                title="Secure Admin Portal"
-              >
-                <Shield className="w-3.5 h-3.5 text-amber-700" />
-                {isAdminLoggedIn ? 'Admin Active' : 'Admin'}
-              </button>
-            )}
           </nav>
 
-          {/* User Account & Actions (Order 8 - 10) */}
-          <div className="hidden sm:flex items-center gap-2 xl:gap-2.5 shrink-0">
-            {user.isLoggedIn ? (
+          {/* 3. Right Section: Unified Account Button + Book Now */}
+          <div className="hidden sm:flex items-center gap-3 shrink-0">
+            {/* Unified Account Button */}
+            {isDoctorLoggedIn ? (
               <button
-                onClick={onOpenDashboard}
-                className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-[#FAF7EE] hover:bg-[#EAE5D8] rounded-full transition-colors cursor-pointer border border-[#DDD6C5] whitespace-nowrap shrink-0"
+                type="button"
+                onClick={handleAccountClick}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-bold bg-[#032F31] text-[#FAE58D] hover:bg-[#074749] border border-teal-800 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                title="Doctor Portal"
               >
-                <User className="w-3.5 h-3.5 text-[#032F31]" />
-                <span className="whitespace-nowrap">{user.name.split(' ')[0]}</span>
+                <Stethoscope className="w-4 h-4 text-[#FAE58D]" />
+                <span>Dr. {doctorName?.replace(/^Dr\.?\s*/i, '').split(' ')[0] || 'Doctor'}</span>
+              </button>
+            ) : isAdminLoggedIn ? (
+              <button
+                type="button"
+                onClick={handleAccountClick}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950 hover:bg-amber-400 border border-amber-600 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                title="Administrator Portal"
+              >
+                <Shield className="w-4 h-4 text-slate-950" />
+                <span>Admin Portal</span>
+              </button>
+            ) : user.isLoggedIn ? (
+              <button
+                type="button"
+                onClick={handleAccountClick}
+                className="relative inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-800 bg-[#FAF7EE] hover:bg-[#EAE5D8] rounded-full transition-colors cursor-pointer border border-[#DDD6C5] shadow-2xs whitespace-nowrap"
+                title="Patient Dashboard & Appointments"
+              >
+                <User className="w-4 h-4 text-[#032F31]" />
+                <span>{user.name.split(' ')[0]}</span>
                 {upcomingCount > 0 && (
                   <span className="w-4 h-4 rounded-full bg-[#032F31] text-[#FAE58D] text-[9px] flex items-center justify-center font-bold">
                     {upcomingCount}
@@ -220,37 +258,32 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
               </button>
             ) : (
-              <div className="flex items-center gap-1 xl:gap-1.5 shrink-0">
-                {/* 8. Sign In */}
-                <button
-                  onClick={() => onOpenAuth('signin')}
-                  className="px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:text-[#032F31] transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  Sign In
-                </button>
-                {/* 9. Sign Up */}
-                <button
-                  onClick={() => onOpenAuth('signup')}
-                  className="px-3 py-1.5 text-xs font-semibold text-[#032F31] hover:text-black bg-[#FAF7EE] hover:bg-[#EAE5D8] border border-[#DDD6C5] rounded-full transition-colors cursor-pointer shadow-2xs whitespace-nowrap"
-                >
-                  Sign Up
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleAccountClick}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-semibold text-[#032F31] hover:text-black bg-[#FAF7EE] hover:bg-[#EAE5D8] border border-[#DDD6C5] shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                aria-label="Open Account Authentication"
+              >
+                <User className="w-4 h-4 text-[#032F31]" />
+                <span>Account</span>
+              </button>
             )}
 
-            {/* 10. Book Now — Guaranteed Visible & Unclipped */}
+            {/* Book Now Button */}
             <button
+              type="button"
               onClick={() => onNavigateToSection('doctors-section')}
-              className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 lg:px-4.5 py-2.5 rounded-full bg-[#032F31] hover:bg-[#074749] text-white text-xs font-semibold tracking-wide shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-4 sm:px-5 py-2.5 rounded-full bg-[#032F31] hover:bg-[#074749] text-white text-xs font-semibold tracking-wide shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
             >
               <Calendar className="w-3.5 h-3.5 text-[#FAE58D]" />
-              Book Now
+              <span>Book Now</span>
             </button>
           </div>
 
-          {/* Mobile menu toggle */}
+          {/* Mobile menu hamburger toggle */}
           <div className="flex md:hidden items-center gap-2 shrink-0">
             <button
+              type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="p-2 rounded-xl text-slate-800 hover:bg-[#EAE5D8] focus:outline-none cursor-pointer"
               aria-label="Toggle Navigation Menu"
@@ -261,9 +294,10 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Mobile Drawer */}
+      {/* ── Mobile Navigation Drawer ──────────────────────────────────────── */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-slate-200 bg-white px-4 pt-3 pb-6 space-y-4 shadow-xl box-border">
+        <div className="md:hidden border-t border-slate-200 bg-white px-4 pt-3 pb-6 space-y-4 shadow-xl box-border animate-fadeIn">
+          {/* City Filter */}
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
             <span className="text-xs font-medium text-slate-600">Select City Filter:</span>
             <select
@@ -277,97 +311,96 @@ export const Navbar: React.FC<NavbarProps> = ({
             </select>
           </div>
 
-          <div className="grid grid-cols-1 gap-2 text-sm font-medium text-slate-700">
+          {/* Navigation Links */}
+          <div className="grid grid-cols-1 gap-1.5 text-sm font-medium text-slate-700">
             <button
+              type="button"
               onClick={() => { onNavigateToSection('doctors-section'); setMobileMenuOpen(false); }}
-              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 flex items-center justify-between font-semibold text-[#032F31]"
+              className="text-left py-2.5 px-3 rounded-lg hover:bg-slate-50 flex items-center justify-between font-semibold text-[#032F31] cursor-pointer"
             >
               <span>Find Verified Doctors</span>
               <Search className="w-4 h-4 text-slate-400" />
             </button>
+
             <button
-              onClick={() => { onNavigateToSection('specialties-section'); setMobileMenuOpen(false); }}
-              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50"
-            >
-              Browse Specialties
-            </button>
-            <button
+              type="button"
               onClick={() => { onOpenSymptomChecker(); setMobileMenuOpen(false); }}
-              className="text-left py-2 px-3 rounded-lg bg-teal-50 text-teal-800 font-semibold flex items-center gap-2"
+              className="text-left py-2.5 px-3 rounded-lg bg-teal-50 text-teal-900 font-semibold flex items-center gap-2 cursor-pointer"
             >
-              <Sparkles className="w-4 h-4 text-teal-600" />
-              AI Symptom Checker
+              <Sparkles className="w-4 h-4 text-teal-700" />
+              <span>AI Symptom Checker</span>
             </button>
+
             <button
+              type="button"
               onClick={() => { onNavigateToSection('how-it-works'); setMobileMenuOpen(false); }}
-              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50"
+              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 cursor-pointer"
             >
               How It Works
             </button>
-            <button
-              onClick={() => { onOpenDashboard(); setMobileMenuOpen(false); }}
-              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 flex items-center justify-between"
-            >
-              <span>My Appointments</span>
-              {upcomingCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-teal-600 text-white text-[10px] font-bold">
-                  {upcomingCount}
-                </span>
-              )}
-            </button>
-            
-            {/* Doctor Portal — mobile (Hide if Patient logged in) */}
-            {(!user.isLoggedIn || isDoctorLoggedIn) && (
-              <button
-                onClick={() => { onOpenDoctorPortal(); setMobileMenuOpen(false); }}
-                className="text-left py-2.5 px-3 rounded-xl bg-[#032F31]/5 hover:bg-[#032F31]/10 text-[#032F31] font-bold flex items-center gap-2 border border-teal-900/10"
-              >
-                <Stethoscope className="w-4 h-4 text-teal-700" />
-                {isDoctorLoggedIn ? `Doctor Portal (${doctorName})` : 'Doctor Portal'}
-              </button>
-            )}
 
-            {/* Admin Portal — mobile (Hide if Patient logged in) */}
-            {onOpenAdminPortal && (!user.isLoggedIn || isAdminLoggedIn) && (
-              <button
-                onClick={() => { onOpenAdminPortal(); setMobileMenuOpen(false); }}
-                className="text-left py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold flex items-center gap-2 border border-amber-200"
-              >
-                <Shield className="w-4 h-4 text-amber-700" />
-                {isAdminLoggedIn ? 'Admin Portal (Active)' : 'Admin Portal'}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => { onNavigateToSection('about-section'); setMobileMenuOpen(false); }}
+              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 cursor-pointer"
+            >
+              About MediNest
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { onNavigateToSection('specialties-section'); setMobileMenuOpen(false); }}
+              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 cursor-pointer"
+            >
+              Browse Specialties
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { onNavigateToSection('faq-section'); setMobileMenuOpen(false); }}
+              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 cursor-pointer"
+            >
+              Frequently Asked Questions
+            </button>
           </div>
 
-          <div className="pt-2 border-t border-slate-100 flex items-center gap-3">
-            {!user.isLoggedIn ? (
-              <div className="w-1/2 grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => { onOpenAuth('signin'); setMobileMenuOpen(false); }}
-                  className="py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-50 text-center cursor-pointer"
-                >
-                  Sign In
-                </button>
-                <button
-                  onClick={() => { onOpenAuth('signup'); setMobileMenuOpen(false); }}
-                  className="py-2.5 rounded-xl bg-[#032F31] text-xs font-bold text-white hover:bg-[#074749] text-center cursor-pointer"
-                >
-                  Sign Up
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => { onOpenDashboard(); setMobileMenuOpen(false); }}
-                className="w-1/2 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-800 truncate"
-              >
-                Profile ({user.name})
-              </button>
-            )}
+          {/* Bottom Action Bar: Account & Book Now */}
+          <div className="pt-3 border-t border-slate-100 flex items-center gap-3">
             <button
-              onClick={() => { onNavigateToSection('doctors-section'); setMobileMenuOpen(false); }}
-              className="w-1/2 py-2.5 rounded-xl bg-[#0C182B] text-white text-xs font-bold shadow text-center cursor-pointer"
+              type="button"
+              onClick={() => { handleAccountClick(); setMobileMenuOpen(false); }}
+              className="w-1/2 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-center gap-2 cursor-pointer truncate"
             >
-              Book Now
+              {isDoctorLoggedIn ? (
+                <>
+                  <Stethoscope className="w-3.5 h-3.5 text-teal-700" />
+                  <span>Dr. {doctorName?.replace(/^Dr\.?\s*/i, '').split(' ')[0]}</span>
+                </>
+              ) : isAdminLoggedIn ? (
+                <>
+                  <Shield className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Admin</span>
+                </>
+              ) : user.isLoggedIn ? (
+                <>
+                  <User className="w-3.5 h-3.5 text-[#032F31]" />
+                  <span>{user.name.split(' ')[0]}</span>
+                </>
+              ) : (
+                <>
+                  <User className="w-3.5 h-3.5 text-[#032F31]" />
+                  <span>Account</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { onNavigateToSection('doctors-section'); setMobileMenuOpen(false); }}
+              className="w-1/2 py-2.5 rounded-xl bg-[#032F31] text-white text-xs font-bold shadow hover:bg-[#074749] flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Calendar className="w-3.5 h-3.5 text-[#FAE58D]" />
+              <span>Book Now</span>
             </button>
           </div>
         </div>

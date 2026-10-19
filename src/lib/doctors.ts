@@ -155,3 +155,64 @@ export async function fetchDoctorById(id: string): Promise<Doctor | null> {
 
   return INITIAL_DOCTORS.find(d => d.id === id) ?? null;
 }
+
+/**
+ * Fetches saved doctor IDs for the authenticated patient.
+ */
+export async function fetchSavedDoctorIds(patientId?: string, token?: string): Promise<string[]> {
+  try {
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (patientId) headers['x-user-id'] = patientId;
+
+    const res = await fetch(`${API_BASE_URL}/doctors/saved`, { headers });
+    if (res.ok) {
+      const body = await res.json();
+      if (body.success && Array.isArray(body.data)) {
+        return body.data;
+      }
+    }
+  } catch (_err) {}
+  return [];
+}
+
+/**
+ * Saves a doctor to the patient's account in MySQL DB.
+ */
+export async function saveDoctorInDB(doctorId: string, patientId?: string, token?: string): Promise<boolean> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (patientId) headers['x-user-id'] = patientId;
+
+    const res = await fetch(`${API_BASE_URL}/doctors/saved/${encodeURIComponent(doctorId)}`, {
+      method: 'POST',
+      headers,
+    });
+    const body = await res.json();
+    return res.ok && body.success;
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * Removes a saved doctor from the patient's account in MySQL DB.
+ */
+export async function removeSavedDoctorInDB(doctorId: string, patientId?: string, token?: string): Promise<boolean> {
+  try {
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (patientId) headers['x-user-id'] = patientId;
+
+    const res = await fetch(`${API_BASE_URL}/doctors/saved/${encodeURIComponent(doctorId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+    const body = await res.json();
+    return res.ok && body.success;
+  } catch (_err) {
+    return false;
+  }
+}
+

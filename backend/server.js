@@ -8,7 +8,8 @@ import paymentsRoutes from './routes/paymentsRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import reportsRoutes from './routes/reportsRoutes.js';
-
+import chatRoutes from './routes/chatRoutes.js';
+import { connectMongoDB, disconnectMongoDB } from './config/mongodb.js';
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });
@@ -39,7 +40,22 @@ app.use('/api/v1/slots', slotsRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/reports', reportsRoutes);
+app.use('/api/v1/chat', chatRoutes);
 
+// Connect to MongoDB asynchronously (non-blocking for Express & MySQL startup)
+connectMongoDB().catch((err) => {
+  console.warn('[MongoDB Startup Warning] Could not connect to MongoDB at boot:', err.message);
+});
+
+// Graceful shutdown
+const handleGracefulShutdown = async (signal) => {
+  console.log(`[MediNest Backend] Received ${signal}. Closing MongoDB connection...`);
+  await disconnectMongoDB();
+  process.exit(0);
+};
+
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {

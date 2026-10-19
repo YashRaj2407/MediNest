@@ -90,7 +90,7 @@ export function generatePrescriptionPDF(
   }
 
   // Doctor Info Defaults
-  const docName = doctor?.name || appointment.doctorName || 'Dr. Rohan Gupta';
+  const docName = doctor?.name || appointment.doctorName || 'Consulting Physician';
   const docSpecialty = doctor?.specialty || appointment.doctorSpecialty || 'General Physician';
   const docQuals = ('qualifications' in (doctor || {}) && doctor?.qualifications)
     ? (doctor as any).qualifications 

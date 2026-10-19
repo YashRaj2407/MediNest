@@ -17,11 +17,13 @@ import { Appointment } from '../../types';
 
 interface DoctorPatientsTabProps {
   appointments: Appointment[];
+  doctorName?: string;
   onOpenPrescription: (appointment: Appointment) => void;
 }
 
 export const DoctorPatientsTab: React.FC<DoctorPatientsTabProps> = ({
   appointments,
+  doctorName,
   onOpenPrescription
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,7 +110,7 @@ export const DoctorPatientsTab: React.FC<DoctorPatientsTabProps> = ({
             My Consulted Patients ({patientsList.length})
           </h3>
           <p className="text-xs text-slate-500">
-            Patients who have scheduled in-clinic or video consultations with Dr. Rohan Gupta.
+            Patients who have scheduled in-clinic or video consultations with {doctorName || 'you'}.
           </p>
         </div>
 
@@ -223,7 +225,7 @@ export const DoctorPatientsTab: React.FC<DoctorPatientsTabProps> = ({
               <div className="space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                   <Calendar className="w-4 h-4 text-teal-800" />
-                  Consultation History with Dr. Rohan Gupta
+                  Consultation History with {doctorName || selectedPatient.appointments[0]?.doctorName || 'Doctor'}
                 </h4>
 
                 <div className="space-y-3">
