@@ -26,6 +26,7 @@ import {
   createConversation, 
   sendMessageToConversation, 
   deleteConversation,
+  checkChatStatus,
   ConversationItem,
   FullConversation,
   ChatMessage
@@ -61,13 +62,15 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<ReturnType<typeof analyzeSymptomsEngine> | null>(null);
 
-  // --- Chat Assistant State (MongoDB-backed) ---
+  // --- Chat Assistant State ---
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConversation, setActiveConversation] = useState<FullConversation | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isMongoHealthy, setIsMongoHealthy] = useState<boolean | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat to bottom
@@ -79,14 +82,24 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
     if (activeMode === 'chat') {
       scrollToBottom();
     }
-  }, [activeConversation?.messages, activeMode]);
+  }, [activeConversation?.messages, activeMode, isSending]);
 
-  // Load conversations list on mount
+  // Load status and conversations list on mount / open
   useEffect(() => {
     if (isOpen) {
-      loadUserConversations();
+      loadStatusAndConversations();
     }
   }, [isOpen, userId, userToken]);
+
+  const loadStatusAndConversations = async () => {
+    try {
+      const status = await checkChatStatus();
+      setIsMongoHealthy(Boolean(status.mongoConnected));
+    } catch (_) {
+      setIsMongoHealthy(false);
+    }
+    loadUserConversations();
+  };
 
   const loadUserConversations = async () => {
     setIsLoadingHistory(true);
@@ -109,18 +122,21 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
     setShowHistoryDrawer(false);
     setActiveConversation(null);
     setChatInput('');
+    setErrorMessage(null);
   };
 
   const handleSelectConversation = async (convId: string) => {
     setShowHistoryDrawer(false);
     setIsLoadingHistory(true);
+    setErrorMessage(null);
     try {
       const full = await fetchConversationById(convId, userToken, userId);
       if (full) {
         setActiveConversation(full);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching conversation:', err);
+      setErrorMessage(err.message || 'Failed to load conversation details.');
     } finally {
       setIsLoadingHistory(false);
     }
@@ -139,56 +155,85 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
   };
 
   const handleSendMessage = async (customMessage?: string) => {
-    const textToSend = customMessage || chatInput.trim();
+    const textToSend = (customMessage || chatInput).trim();
     if (!textToSend || isSending) return;
 
+    setErrorMessage(null);
     setIsSending(true);
-    setChatInput('');
+    if (!customMessage) {
+      setChatInput('');
+    }
+
+    // Optimistically create user message
+    const tempUserMsg: ChatMessage = {
+      role: 'user',
+      content: textToSend,
+      timestamp: new Date()
+    };
+
+    const previousConv = activeConversation;
+
+    // Immediately display user message in chat
+    setActiveConversation(prev => prev ? {
+      ...prev,
+      messages: [...prev.messages, tempUserMsg]
+    } : {
+      id: 'temp_active_session',
+      ownerUserId: userId || 'guest',
+      title: textToSend.slice(0, 50) + (textToSend.length > 50 ? '...' : ''),
+      messages: [tempUserMsg],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastMessageAt: new Date().toISOString(),
+    });
 
     try {
-      if (!activeConversation) {
-        // Create new conversation in MongoDB
+      if (!previousConv || previousConv.id === 'temp_active_session') {
         const created = await createConversation(
           textToSend.slice(0, 50) + (textToSend.length > 50 ? '...' : ''),
           textToSend,
           userToken,
           userId
         );
-        if (created) {
-          setActiveConversation(created);
-          // Refresh conversation list
+        setActiveConversation(created);
+        try {
           const list = await fetchConversations(userToken, userId);
           setConversations(list);
-        }
+        } catch (_) {}
       } else {
-        // Optimistically add user message to local state
-        const tempUserMsg: ChatMessage = {
-          role: 'user',
-          content: textToSend,
-          timestamp: new Date()
-        };
-        setActiveConversation(prev => prev ? {
-          ...prev,
-          messages: [...prev.messages, tempUserMsg]
-        } : null);
-
-        // Send to MongoDB API
-        const result = await sendMessageToConversation(activeConversation.id, textToSend, userToken, userId);
-        if (result) {
-          setActiveConversation(result.conversation);
-          // Update conversation in list
-          setConversations(prev => prev.map(c => 
-            c.id === result.conversation.id 
-              ? { ...c, lastMessageAt: result.conversation.lastMessageAt, messageCount: result.conversation.messages.length }
-              : c
-          ));
-        }
+        const result = await sendMessageToConversation(previousConv.id, textToSend, userToken, userId);
+        setActiveConversation(result.conversation);
+        setConversations(prev => prev.map(c => 
+          c.id === result.conversation.id 
+            ? { ...c, lastMessageAt: result.conversation.lastMessageAt, messageCount: result.conversation.messages.length }
+            : c
+        ));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[SymptomCheckerModal] Chat send error:', err);
+      const msg = err?.message || 'Unable to communicate with MediNest AI. Please check your connection.';
+      setErrorMessage(msg);
+      if (!customMessage) {
+        setChatInput(textToSend);
+      }
     } finally {
       setIsSending(false);
     }
+  };
+
+  // Helper to infer specialty from clinical text when metadata is absent
+  const inferSpecialtyFromText = (content: string = '') => {
+    const text = content.toLowerCase();
+    if (text.includes('dermatolog') || text.includes('skin') || text.includes('rash') || text.includes('itch')) return 'Dermatologist';
+    if (text.includes('cardiolog') || text.includes('heart') || text.includes('chest') || text.includes('blood pressure')) return 'Cardiologist';
+    if (text.includes('orthopedic') || text.includes('bone') || text.includes('joint') || text.includes('knee') || text.includes('spine')) return 'Orthopedic Specialist';
+    if (text.includes('gynecolog') || text.includes('period') || text.includes('pregnancy') || text.includes('menstrual')) return 'Gynecologist';
+    if (text.includes('dentist') || text.includes('dental') || text.includes('tooth') || text.includes('teeth')) return 'Dentist';
+    if (text.includes('ent') || text.includes('throat') || text.includes('ear') || text.includes('nose') || text.includes('tonsil')) return 'ENT Specialist';
+    if (text.includes('psychiat') || text.includes('mental health') || text.includes('anxiety') || text.includes('depression')) return 'Psychiatrist';
+    if (text.includes('pediatric') || text.includes('child') || text.includes('infant')) return 'Pediatrician';
+    if (text.includes('general physician') || text.includes('fever') || text.includes('cough') || text.includes('fatigue')) return 'General Physician';
+    return '';
   };
 
   // Helper to extract matching doctors for specialty
@@ -260,9 +305,19 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2 text-teal-400 text-xs font-bold uppercase tracking-wider mb-1">
-            <Sparkles className="w-4 h-4" />
-            AI Clinical Assistant • MongoDB Synced
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-1">
+            <Sparkles className="w-4 h-4 text-teal-400" />
+            {isMongoHealthy ? (
+              <span className="text-teal-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse"></span>
+                AI Clinical Assistant • MongoDB Synced
+              </span>
+            ) : (
+              <span className="text-teal-300/80 flex items-center gap-1.5" title="Cloud conversation history requires active MongoDB">
+                <span className="w-2 h-2 rounded-full bg-teal-300/60"></span>
+                AI Clinical Assistant • Active Guide
+              </span>
+            )}
           </div>
           <h2 className="text-xl sm:text-2xl font-display font-medium">
             MediNest AI Health & Doctor Guide
@@ -316,7 +371,11 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                       {activeConversation?.title || 'New Consultation Session'}
                     </h3>
                     <span className="text-[10px] text-slate-400">
-                      {activeConversation ? `${activeConversation.messages.length} messages saved in MongoDB` : 'Ask anything to begin session'}
+                      {activeConversation ? (
+                        isMongoHealthy
+                          ? `${activeConversation.messages.length} messages saved in MongoDB`
+                          : `${activeConversation.messages.length} messages in clinical consultation`
+                      ) : 'Ask anything or pick a symptom below'}
                     </span>
                   </div>
                 </div>
@@ -351,7 +410,7 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                     <div className="flex items-center gap-2">
                       <History className="w-4 h-4 text-teal-700" />
                       <h4 className="text-xs font-bold text-[#0C182B] uppercase tracking-wider">
-                        Saved MongoDB Consultations
+                        {isMongoHealthy ? 'Saved MongoDB Consultations' : 'Past Clinical Consultations'}
                       </h4>
                     </div>
                     <button
@@ -364,7 +423,9 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
 
                   {conversations.length === 0 ? (
                     <div className="text-center py-8 text-slate-400 text-xs">
-                      No saved consultations found in MongoDB. Start a chat below!
+                      {isMongoHealthy
+                        ? 'No saved consultations found in MongoDB. Start a chat below!'
+                        : 'No past consultations found. Cloud persistence is enabled when MongoDB is connected.'}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -406,6 +467,26 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                 </div>
               )}
 
+              {/* Error Message Banner */}
+              {errorMessage && (
+                <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between gap-2 animate-fadeIn mb-2 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{errorMessage}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage(null);
+                      handleSendMessage();
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold shrink-0 cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
               {/* Chat Messages Scroll Container */}
               <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-[280px] max-h-[380px]">
                 {!activeConversation || activeConversation.messages.length === 0 ? (
@@ -433,7 +514,8 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                           key={idx}
                           type="button"
                           onClick={() => handleSendMessage(promptText)}
-                          className="px-3 py-1.5 rounded-full bg-slate-100 hover:bg-teal-50 hover:text-teal-800 text-slate-700 text-xs font-medium border border-slate-200 transition-colors cursor-pointer"
+                          disabled={isSending}
+                          className="px-3 py-1.5 rounded-full bg-slate-100 hover:bg-teal-50 hover:text-teal-800 text-slate-700 text-xs font-medium border border-slate-200 transition-colors cursor-pointer disabled:opacity-50"
                         >
                           + {promptText}
                         </button>
@@ -443,8 +525,9 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                 ) : (
                   activeConversation.messages.map((msg, idx) => {
                     const isUser = msg.role === 'user';
-                    const suggestedSpec = msg.metadata?.suggestedSpecialty;
-                    const matchedDocs = suggestedSpec ? getDoctorsForSpecialty(suggestedSpec) : [];
+                    const suggestedSpec = msg.metadata?.suggestedSpecialty || inferSpecialtyFromText(msg.content);
+                    const rawMatched = suggestedSpec ? getDoctorsForSpecialty(suggestedSpec) : [];
+                    const matchedDocs = rawMatched.length > 0 ? rawMatched : (suggestedSpec ? doctors.slice(0, 2) : []);
 
                     return (
                       <div
@@ -533,7 +616,10 @@ export const SymptomCheckerModal: React.FC<SymptomCheckerModalProps> = ({
                   <input
                     type="text"
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
+                    onChange={(e) => {
+                      setChatInput(e.target.value);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
                     placeholder="Type symptoms or medical questions (e.g., knee pain when bending)..."
                     disabled={isSending}
                     className="flex-1 px-4 py-3 rounded-2xl border border-slate-200 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600"

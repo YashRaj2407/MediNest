@@ -3,23 +3,57 @@ import Conversation from '../models/Conversation.js';
 import { isMongoConnected, connectMongoDB } from '../config/mongodb.js';
 import { generateChatbotResponse } from '../services/aiChatService.js';
 
+// In-memory conversation fallback when MongoDB is not connected
+const inMemoryStore = new Map();
+
+function createInMemConversation(ownerId, isGuest, title) {
+  // Use a valid 24-hex-char MongoDB-like ObjectId so clients and endpoints validate it cleanly
+  const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+  const randomHex = Math.random().toString(16).substring(2, 18).padEnd(16, '0');
+  const id = `${timestamp}${randomHex}`.slice(0, 24);
+
+  const conv = {
+    _id: id,
+    id,
+    ownerUserId: String(ownerId),
+    title: title || 'New Clinical Consultation',
+    isGuest: Boolean(isGuest),
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastMessageAt: new Date(),
+    toClientJSON() {
+      return {
+        id: this.id,
+        ownerUserId: this.ownerUserId,
+        title: this.title,
+        isGuest: this.isGuest,
+        messages: this.messages,
+        createdAt: this.createdAt,
+        updatedAt: this.updatedAt,
+        lastMessageAt: this.lastMessageAt,
+      };
+    },
+    async save() {
+      this.updatedAt = new Date();
+      inMemoryStore.set(this.id, this);
+      return this;
+    }
+  };
+  inMemoryStore.set(id, conv);
+  return conv;
+}
+
 /**
- * Helper to ensure MongoDB is ready before processing request.
- * If not connected, attempts a fast connection; otherwise returns 503.
+ * Checks if MongoDB is currently connected or can connect quickly.
+ * Does not block if connection fails or is in cooldown.
  */
-async function ensureMongoReady(res) {
-  if (isMongoConnected()) {
-    return true;
-  }
+async function isMongoAvailable() {
+  if (isMongoConnected()) return true;
   try {
     await connectMongoDB();
     return isMongoConnected();
-  } catch (err) {
-    res.status(503).json({
-      success: false,
-      error: 'MongoDB service is currently unavailable. Please try again later.',
-      status: 'service_unavailable',
-    });
+  } catch (_) {
     return false;
   }
 }
@@ -62,11 +96,9 @@ export async function getChatStatus(req, res) {
 
 /**
  * POST /api/v1/chat/conversations
- * Creates a new conversation
+ * Creates a new conversation (persisted to MongoDB if available, otherwise session memory)
  */
 export async function createConversation(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { ownerId, isGuest } = resolveOwnerId(req);
     const { title, initialMessage } = req.body || {};
@@ -75,12 +107,19 @@ export async function createConversation(req, res) {
       ? title.trim().slice(0, 150)
       : 'New Clinical Consultation';
 
-    const conversation = new Conversation({
-      ownerUserId: ownerId,
-      title: convTitle,
-      isGuest,
-      messages: [],
-    });
+    const useMongo = await isMongoAvailable();
+    let conversation;
+
+    if (useMongo) {
+      conversation = new Conversation({
+        ownerUserId: ownerId,
+        title: convTitle,
+        isGuest,
+        messages: [],
+      });
+    } else {
+      conversation = createInMemConversation(ownerId, isGuest, convTitle);
+    }
 
     if (initialMessage && typeof initialMessage === 'string' && initialMessage.trim()) {
       const userContent = initialMessage.trim().slice(0, 4000);
@@ -112,6 +151,7 @@ export async function createConversation(req, res) {
       success: true,
       ownerId,
       isGuest,
+      mongoSynced: useMongo,
       data: conversation.toClientJSON(),
     });
   } catch (err) {
@@ -128,46 +168,71 @@ export async function createConversation(req, res) {
  * Lists all conversations belonging to the caller
  */
 export async function getConversations(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { ownerId } = resolveOwnerId(req);
+    const useMongo = await isMongoAvailable();
+
+    let formatted = [];
+    let total = 0;
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const skip = (page - 1) * limit;
 
-    const query = { ownerUserId: ownerId };
-
-    const [total, docs] = await Promise.all([
-      Conversation.countDocuments(query),
-      Conversation.find(query)
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-    ]);
-
-    const formatted = docs.map((doc) => {
-      const lastMsg = doc.messages && doc.messages.length > 0
-        ? doc.messages[doc.messages.length - 1]
-        : null;
-
-      return {
-        id: doc._id.toString(),
-        ownerUserId: doc.ownerUserId,
-        title: doc.title,
-        isGuest: doc.isGuest || false,
-        messageCount: doc.messages ? doc.messages.length : 0,
-        lastMessage: lastMsg ? {
-          role: lastMsg.role,
-          content: lastMsg.content.slice(0, 100) + (lastMsg.content.length > 100 ? '...' : ''),
-          timestamp: lastMsg.timestamp,
-        } : null,
-        lastMessageAt: doc.lastMessageAt || doc.updatedAt,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
-      };
-    });
+    if (useMongo) {
+      const query = { ownerUserId: ownerId };
+      const [dbTotal, docs] = await Promise.all([
+        Conversation.countDocuments(query),
+        Conversation.find(query)
+          .sort({ updatedAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+      ]);
+      total = dbTotal;
+      formatted = docs.map((doc) => {
+        const lastMsg = doc.messages && doc.messages.length > 0
+          ? doc.messages[doc.messages.length - 1]
+          : null;
+        return {
+          id: doc._id.toString(),
+          ownerUserId: doc.ownerUserId,
+          title: doc.title,
+          isGuest: doc.isGuest || false,
+          messageCount: doc.messages ? doc.messages.length : 0,
+          lastMessage: lastMsg ? {
+            role: lastMsg.role,
+            content: lastMsg.content.slice(0, 100) + (lastMsg.content.length > 100 ? '...' : ''),
+            timestamp: lastMsg.timestamp,
+          } : null,
+          lastMessageAt: doc.lastMessageAt || doc.updatedAt,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+        };
+      });
+    } else {
+      const memList = [...inMemoryStore.values()]
+        .filter(c => c.ownerUserId === ownerId)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      total = memList.length;
+      formatted = memList.slice(skip, skip + limit).map(c => {
+        const lastMsg = c.messages && c.messages.length > 0 ? c.messages[c.messages.length - 1] : null;
+        return {
+          id: c.id,
+          ownerUserId: c.ownerUserId,
+          title: c.title,
+          isGuest: c.isGuest,
+          messageCount: c.messages ? c.messages.length : 0,
+          lastMessage: lastMsg ? {
+            role: lastMsg.role,
+            content: lastMsg.content.slice(0, 100) + (lastMsg.content.length > 100 ? '...' : ''),
+            timestamp: lastMsg.timestamp,
+          } : null,
+          lastMessageAt: c.lastMessageAt || c.updatedAt,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+        };
+      });
+    }
 
     res.setHeader('x-owner-id', ownerId);
     return res.json({
@@ -175,7 +240,8 @@ export async function getConversations(req, res) {
       count: formatted.length,
       total,
       page,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / limit) || 1,
+      mongoSynced: useMongo,
       data: formatted,
     });
   } catch (err) {
@@ -192,19 +258,20 @@ export async function getConversations(req, res) {
  * Fetches single conversation and its full message history
  */
 export async function getConversationById(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid conversation ID format',
-      });
-    }
-
     const { ownerId } = resolveOwnerId(req);
-    const conversation = await Conversation.findById(id);
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    let conversation = null;
+    if (await isMongoAvailable()) {
+      if (mongoose.isValidObjectId(id)) {
+        conversation = await Conversation.findById(id);
+      }
+    }
+    if (!conversation) {
+      conversation = inMemoryStore.get(id);
+    }
 
     if (!conversation) {
       return res.status(404).json({
@@ -213,8 +280,6 @@ export async function getConversationById(req, res) {
       });
     }
 
-    // Authorization check: User must own the conversation (unless admin)
-    const isAdmin = req.user && req.user.role === 'admin';
     if (!isAdmin && conversation.ownerUserId !== ownerId) {
       return res.status(403).json({
         success: false,
@@ -224,7 +289,7 @@ export async function getConversationById(req, res) {
 
     return res.json({
       success: true,
-      data: conversation.toClientJSON(),
+      data: conversation.toClientJSON ? conversation.toClientJSON() : conversation,
     });
   } catch (err) {
     console.error('[ChatController] getConversationById error:', err);
@@ -240,17 +305,8 @@ export async function getConversationById(req, res) {
  * Appends user message, queries AI service, appends assistant reply, saves conversation
  */
 export async function sendMessage(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid conversation ID format',
-      });
-    }
-
     const { content } = req.body || {};
     if (!content || typeof content !== 'string' || !content.trim()) {
       return res.status(400).json({
@@ -268,7 +324,19 @@ export async function sendMessage(req, res) {
     }
 
     const { ownerId } = resolveOwnerId(req);
-    const conversation = await Conversation.findById(id);
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    let conversation = null;
+    let useMongo = false;
+    if (await isMongoAvailable()) {
+      if (mongoose.isValidObjectId(id)) {
+        conversation = await Conversation.findById(id);
+        if (conversation) useMongo = true;
+      }
+    }
+    if (!conversation) {
+      conversation = inMemoryStore.get(id);
+    }
 
     if (!conversation) {
       return res.status(404).json({
@@ -277,8 +345,6 @@ export async function sendMessage(req, res) {
       });
     }
 
-    // Ownership check
-    const isAdmin = req.user && req.user.role === 'admin';
     if (!isAdmin && conversation.ownerUserId !== ownerId) {
       return res.status(403).json({
         success: false,
@@ -293,7 +359,6 @@ export async function sendMessage(req, res) {
       });
     }
 
-    // Append user message
     const userMsg = {
       role: 'user',
       content: trimmed,
@@ -301,15 +366,12 @@ export async function sendMessage(req, res) {
     };
     conversation.messages.push(userMsg);
 
-    // Auto-update default title if first message
     if (conversation.title === 'New Clinical Consultation') {
       conversation.title = trimmed.slice(0, 60) + (trimmed.length > 60 ? '...' : '');
     }
 
-    // Generate AI response
     const aiResponse = await generateChatbotResponse(conversation.messages);
 
-    // Append assistant message
     const assistantMsg = {
       role: 'assistant',
       content: aiResponse.content,
@@ -324,7 +386,8 @@ export async function sendMessage(req, res) {
     return res.json({
       success: true,
       reply: assistantMsg,
-      data: conversation.toClientJSON(),
+      mongoSynced: useMongo,
+      data: conversation.toClientJSON ? conversation.toClientJSON() : conversation,
     });
   } catch (err) {
     console.error('[ChatController] sendMessage error:', err);
@@ -337,12 +400,9 @@ export async function sendMessage(req, res) {
 
 /**
  * POST /api/v1/chat/message
- * Quick unified chat endpoint: if conversationId is supplied, appends to it;
- * if not, creates a new conversation and returns both conversationId and reply.
+ * Quick unified chat endpoint: auto-creates or appends message
  */
 export async function quickChat(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { conversationId, message, title } = req.body || {};
     if (!message || typeof message !== 'string' || !message.trim()) {
@@ -354,11 +414,17 @@ export async function quickChat(req, res) {
 
     const { ownerId, isGuest } = resolveOwnerId(req);
     const trimmed = message.trim().slice(0, 4000);
+    const useMongo = await isMongoAvailable();
 
     let conversation;
 
-    if (conversationId && mongoose.isValidObjectId(conversationId)) {
-      conversation = await Conversation.findById(conversationId);
+    if (conversationId) {
+      if (useMongo && mongoose.isValidObjectId(conversationId)) {
+        conversation = await Conversation.findById(conversationId);
+      }
+      if (!conversation) {
+        conversation = inMemoryStore.get(conversationId);
+      }
       if (conversation && conversation.ownerUserId !== ownerId && (!req.user || req.user.role !== 'admin')) {
         return res.status(403).json({
           success: false,
@@ -372,12 +438,16 @@ export async function quickChat(req, res) {
         ? title.trim().slice(0, 150)
         : trimmed.slice(0, 60) + (trimmed.length > 60 ? '...' : '');
 
-      conversation = new Conversation({
-        ownerUserId: ownerId,
-        title: convTitle,
-        isGuest,
-        messages: [],
-      });
+      if (useMongo) {
+        conversation = new Conversation({
+          ownerUserId: ownerId,
+          title: convTitle,
+          isGuest,
+          messages: [],
+        });
+      } else {
+        conversation = createInMemConversation(ownerId, isGuest, convTitle);
+      }
     }
 
     if (conversation.messages.length >= 150) {
@@ -411,8 +481,9 @@ export async function quickChat(req, res) {
       success: true,
       conversationId: conversation._id.toString(),
       ownerId,
+      mongoSynced: useMongo,
       reply: assistantMsg,
-      data: conversation.toClientJSON(),
+      data: conversation.toClientJSON ? conversation.toClientJSON() : conversation,
     });
   } catch (err) {
     console.error('[ChatController] quickChat error:', err);
@@ -428,19 +499,20 @@ export async function quickChat(req, res) {
  * Deletes a conversation if caller is the owner or admin
  */
 export async function deleteConversation(req, res) {
-  if (!(await ensureMongoReady(res))) return;
-
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid conversation ID format',
-      });
-    }
-
     const { ownerId } = resolveOwnerId(req);
-    const conversation = await Conversation.findById(id);
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    let conversation = null;
+    if (await isMongoAvailable()) {
+      if (mongoose.isValidObjectId(id)) {
+        conversation = await Conversation.findById(id);
+      }
+    }
+    if (!conversation) {
+      conversation = inMemoryStore.get(id);
+    }
 
     if (!conversation) {
       return res.status(404).json({
@@ -449,7 +521,6 @@ export async function deleteConversation(req, res) {
       });
     }
 
-    const isAdmin = req.user && req.user.role === 'admin';
     if (!isAdmin && conversation.ownerUserId !== ownerId) {
       return res.status(403).json({
         success: false,
@@ -457,7 +528,10 @@ export async function deleteConversation(req, res) {
       });
     }
 
-    await Conversation.findByIdAndDelete(id);
+    if (isMongoConnected() && mongoose.isValidObjectId(id)) {
+      await Conversation.findByIdAndDelete(id).catch(() => {});
+    }
+    inMemoryStore.delete(id);
 
     return res.json({
       success: true,

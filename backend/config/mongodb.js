@@ -6,6 +6,8 @@ dotenv.config({ path: '.env.local' });
 
 let isConnecting = false;
 let connectionPromise = null;
+let lastFailureTime = 0;
+const FAILURE_COOLDOWN_MS = 30000;
 
 /**
  * Sanitizes MongoDB URI for logging (removes credentials if present)
@@ -27,6 +29,10 @@ export async function connectMongoDB() {
 
   if (isConnecting && connectionPromise) {
     return connectionPromise;
+  }
+
+  if (Date.now() - lastFailureTime < FAILURE_COOLDOWN_MS) {
+    throw new Error('MongoDB connection in cooldown after recent failure');
   }
 
   const rawUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/medinest';
@@ -55,8 +61,11 @@ export async function connectMongoDB() {
       const dbName = conn.connection.name || 'medinest';
 
       console.log(`[MongoDB] Successfully connected to database: ${dbName} (${host}:${port})`);
+      lastFailureTime = 0;
       return conn.connection;
     } catch (err) {
+      lastFailureTime = Date.now();
+      connectionPromise = null;
       console.error(`[MongoDB] Connection failed (${sanitizeMongoUri(effectiveUri)}): ${err.message}`);
       throw err;
     } finally {

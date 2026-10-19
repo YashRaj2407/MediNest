@@ -136,57 +136,50 @@ export async function fetchConversationById(
 }
 
 /**
- * Creates a new conversation in MongoDB.
+ * Creates a new conversation in MongoDB or fallback session.
  */
 export async function createConversation(
   title?: string,
   initialMessage?: string,
   token?: string | null,
   userId?: string | null
-): Promise<FullConversation | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/chat/conversations`, {
-      method: 'POST',
-      headers: getHeaders(token, userId),
-      body: JSON.stringify({ title, initialMessage }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json.success ? json.data : null;
-  } catch (err) {
-    console.error('[Chat API] Failed to create conversation:', err);
-    return null;
+): Promise<FullConversation> {
+  const res = await fetch(`${API_BASE_URL}/chat/conversations`, {
+    method: 'POST',
+    headers: getHeaders(token, userId),
+    body: JSON.stringify({ title, initialMessage }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.success) {
+    const errorMsg = json?.error || `Server responded with status ${res.status}`;
+    throw new Error(errorMsg);
   }
+  return json.data;
 }
 
 /**
- * Appends a message to an existing conversation in MongoDB and receives AI reply.
+ * Appends a message to an existing conversation and receives AI reply.
  */
 export async function sendMessageToConversation(
   conversationId: string,
   content: string,
   token?: string | null,
   userId?: string | null
-): Promise<{ reply: ChatMessage; conversation: FullConversation } | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      headers: getHeaders(token, userId),
-      body: JSON.stringify({ content }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json.success) {
-      return {
-        reply: json.reply,
-        conversation: json.data,
-      };
-    }
-    return null;
-  } catch (err) {
-    console.error('[Chat API] Failed to send message:', err);
-    return null;
+): Promise<{ reply: ChatMessage; conversation: FullConversation }> {
+  const res = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    headers: getHeaders(token, userId),
+    body: JSON.stringify({ content }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.success) {
+    const errorMsg = json?.error || `Server responded with status ${res.status}`;
+    throw new Error(errorMsg);
   }
+  return {
+    reply: json.reply,
+    conversation: json.data,
+  };
 }
 
 /**
@@ -197,27 +190,22 @@ export async function sendQuickChatMessage(
   conversationId?: string | null,
   token?: string | null,
   userId?: string | null
-): Promise<{ conversationId: string; reply: ChatMessage; conversation: FullConversation } | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/chat/message`, {
-      method: 'POST',
-      headers: getHeaders(token, userId),
-      body: JSON.stringify({ message, conversationId }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json.success) {
-      return {
-        conversationId: json.conversationId,
-        reply: json.reply,
-        conversation: json.data,
-      };
-    }
-    return null;
-  } catch (err) {
-    console.error('[Chat API] Failed to send quick chat message:', err);
-    return null;
+): Promise<{ conversationId: string; reply: ChatMessage; conversation: FullConversation }> {
+  const res = await fetch(`${API_BASE_URL}/chat/message`, {
+    method: 'POST',
+    headers: getHeaders(token, userId),
+    body: JSON.stringify({ message, conversationId }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.success) {
+    const errorMsg = json?.error || `Server responded with status ${res.status}`;
+    throw new Error(errorMsg);
   }
+  return {
+    conversationId: json.conversationId,
+    reply: json.reply,
+    conversation: json.data,
+  };
 }
 
 /**

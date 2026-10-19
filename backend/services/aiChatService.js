@@ -99,6 +99,22 @@ We recommend consulting a verified **${specialty}** on MediNest for an official 
 }
 
 /**
+ * Extracts or infers appropriate medical specialty from combined user message and AI response.
+ */
+function detectSpecialty(userMessage, replyText) {
+  const combined = `${userMessage || ''} ${replyText || ''}`.toLowerCase();
+  if (combined.match(/dermatolog|skin|rash|acne|itching|eczema/)) return { specialty: 'Dermatologist', id: 'dermatologist' };
+  if (combined.match(/cardiolog|heart|chest pain|palpitation|blood pressure|hypertension/)) return { specialty: 'Cardiologist', id: 'cardiologist' };
+  if (combined.match(/orthopedic|bone|joint|knee|back|spine|shoulder|fracture/)) return { specialty: 'Orthopedic Specialist', id: 'orthopedic' };
+  if (combined.match(/gynecolog|period|cramp|pcos|pcod|pregnant|pregnancy/)) return { specialty: 'Gynecologist', id: 'gynecologist' };
+  if (combined.match(/dentist|dental|tooth|teeth|gum|cavity/)) return { specialty: 'Dentist', id: 'dentist' };
+  if (combined.match(/ent specialist|ear|nose|throat|tonsil|sinus/)) return { specialty: 'ENT Specialist', id: 'ent' };
+  if (combined.match(/psychiatrist|mental health|anxiety|depression|sleep/)) return { specialty: 'Psychiatrist / Mental Health Specialist', id: 'psychiatrist' };
+  if (combined.match(/pediatric|child|infant|kid|baby/)) return { specialty: 'Pediatrician', id: 'pediatrician' };
+  return { specialty: 'General Physician', id: 'general-physician' };
+}
+
+/**
  * Generates an AI chatbot response given the message history.
  */
 export async function generateChatbotResponse(messages = [], options = {}) {
@@ -138,10 +154,14 @@ export async function generateChatbotResponse(messages = [], options = {}) {
       return generateRulesBasedResponse(lastUserMessage);
     }
 
+    const spec = detectSpecialty(lastUserMessage, replyText);
+
     return {
       content: replyText,
       metadata: {
         model: 'gemini-2.5-flash',
+        suggestedSpecialty: spec.specialty,
+        specialtyId: spec.id,
         timestamp: new Date().toISOString()
       }
     };
