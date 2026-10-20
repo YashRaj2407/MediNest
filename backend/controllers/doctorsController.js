@@ -129,6 +129,21 @@ export async function getFeaturedDoctors(req, res) {
   }
 }
 
+function formatRelativeTime(d) {
+  if (!d) return 'Recently';
+  const diffMs = Date.now() - new Date(d).getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 5) return 'Just now';
+  if (diffMins < 60) return `${diffMins} mins ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? 's' : ''} ago`;
+  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 /**
  * GET /api/v1/doctors/:id
  * Fetch a single doctor profile by ID.
@@ -150,6 +165,28 @@ export async function getDoctorById(req, res) {
     }
 
     const doctor = mapDoctorRow(rows[0]);
+
+    // Attach doctor's verified reviews
+    try {
+      const [revRows] = await pool.query(
+        `SELECT id, patient_name as author, patient_city as city, rating, comment, verified, created_at
+         FROM doctor_reviews
+         WHERE doctor_id = ?
+         ORDER BY created_at DESC`,
+        [id]
+      );
+      doctor.reviews = revRows.map(r => ({
+        id: r.id,
+        author: r.author || 'Verified Patient',
+        city: r.city || 'India',
+        rating: Number(r.rating),
+        date: formatRelativeTime(r.created_at),
+        comment: r.comment || '',
+        verified: Boolean(r.verified),
+      }));
+    } catch (_revErr) {
+      doctor.reviews = [];
+    }
 
     return res.json({ success: true, data: doctor });
   } catch (error) {
@@ -677,6 +714,112 @@ export async function removeSavedDoctor(req, res) {
     });
   } catch (error) {
     console.error('[Express Remove Saved Doctor Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * GET /api/v1/doctors/:id/reviews
+ * Fetch all verified reviews for a doctor.
+ */
+export async function getDoctorReviews(req, res) {
+  try {
+    const { id: doctorId } = req.params;
+    const [rows] = await pool.query(
+      `SELECT id, patient_name as author, patient_city as city, rating, comment, verified, created_at
+       FROM doctor_reviews
+       WHERE doctor_id = ?
+       ORDER BY created_at DESC`,
+      [doctorId]
+    );
+
+    const reviews = rows.map(r => ({
+      id: r.id,
+      author: r.author || 'Verified Patient',
+      city: r.city || 'India',
+      rating: Number(r.rating),
+      date: formatRelativeTime(r.created_at),
+      comment: r.comment || '',
+      verified: Boolean(r.verified),
+    }));
+
+    return res.json({ success: true, data: reviews });
+  } catch (error) {
+    console.error('[Get Doctor Reviews Error]:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * POST /api/v1/doctors/:id/reviews
+ * Submit a rating (1-5 stars) and optional reason for a doctor.
+ */
+export async function addDoctorReview(req, res) {
+  try {
+    const { id: doctorId } = req.params;
+    const { rating, comment, patientName, patientCity } = req.body;
+
+    const numRating = Number(rating);
+    if (!rating || isNaN(numRating) || numRating < 1 || numRating > 5) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please select a valid rating between 1 and 5 stars.',
+      });
+    }
+
+    const roundRating = Math.round(numRating);
+
+    // Verify doctor exists
+    const [docs] = await pool.query('SELECT id, rating, review_count FROM doctor_profiles WHERE id = ?', [doctorId]);
+    if (docs.length === 0) {
+      return res.status(404).json({ success: false, error: 'Doctor not found' });
+    }
+
+    const reviewId = `rev-${uuidv4().slice(0, 8)}`;
+    const authorName = (patientName || req.user?.fullName || req.user?.name || req.user?.email?.split('@')[0] || 'Verified Patient').trim();
+    const authorCity = (patientCity || docs[0].city || 'India').trim();
+    const reviewComment = typeof comment === 'string' ? comment.trim() : '';
+    const patientId = req.user?.id || req.headers['x-user-id'] || null;
+
+    await pool.query(
+      `INSERT INTO doctor_reviews (id, doctor_id, patient_id, patient_name, patient_city, rating, comment, verified, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, TRUE, NOW())`,
+      [reviewId, doctorId, patientId, authorName, authorCity, roundRating, reviewComment]
+    );
+
+    // Recalculate average rating & review count for doctor profile
+    const [[agg]] = await pool.query(
+      `SELECT AVG(rating) as avg_rating, COUNT(*) as cnt FROM doctor_reviews WHERE doctor_id = ?`,
+      [doctorId]
+    );
+
+    const updatedRating = agg?.avg_rating ? Math.round(Number(agg.avg_rating) * 10) / 10 : roundRating;
+    const updatedReviewCount = agg?.cnt ? Number(agg.cnt) : 1;
+
+    await pool.query(
+      `UPDATE doctor_profiles SET rating = ?, review_count = ? WHERE id = ?`,
+      [updatedRating, updatedReviewCount, doctorId]
+    );
+
+    const newReview = {
+      id: reviewId,
+      author: authorName,
+      city: authorCity,
+      rating: roundRating,
+      date: 'Just now',
+      comment: reviewComment,
+      verified: true,
+    };
+
+    return res.status(201).json({
+      success: true,
+      message: 'Thank you! Your rating has been submitted successfully.',
+      data: newReview,
+      updatedRating,
+      updatedReviewCount,
+    });
+  } catch (error) {
+    console.error('[Add Doctor Review Error]:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }

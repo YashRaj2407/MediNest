@@ -60,6 +60,18 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [slotAlert, setSlotAlert] = useState<string | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+  // ── Rating state ─────────────────────────────────────────────────────────────
+  const [reviewList, setReviewList] = useState<{ id: string; author: string; city: string; rating: number; date: string; comment: string; verified: boolean }[]>([]);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [selectedRating, setSelectedRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewSuccess, setReviewSuccess] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [liveRating, setLiveRating] = useState<number | null>(null);
+  const [liveReviewCount, setLiveReviewCount] = useState<number | null>(null);
+
   // Derived: is this doctor saved by the patient?
   const isSaved = doctor ? savedDoctorIds.includes(doctor.id) : false;
 
@@ -158,6 +170,58 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
       }
     };
   }, [doctor?.id, isOpen]); // ← no fetchFreshSlots dep: SSE never reconnects on slot changes
+
+  // ── Fetch reviews when reviews tab is opened ─────────────────────────────────
+  useEffect(() => {
+    if (activeTab !== 'reviews' || !doctor?.id) return;
+    setReviewList(Array.isArray(doctor.reviews) ? doctor.reviews : []);
+    // Refresh from API if available
+    fetch(`${API_BASE_URL}/doctors/${doctor.id}/reviews`)
+      .then(r => r.ok ? r.json() : null)
+      .then(body => {
+        if (body?.success && Array.isArray(body.data)) {
+          setReviewList(body.data);
+        }
+      })
+      .catch(() => {/* offline — keep static fallback */});
+  }, [activeTab, doctor?.id, doctor?.reviews]);
+
+  // ── Submit a rating ─────────────────────────────────────────────────────────
+  const handleSubmitReview = async () => {
+    if (!doctor?.id) return;
+    if (selectedRating === 0) {
+      setReviewError('Please select at least 1 star before submitting.');
+      return;
+    }
+    setReviewSubmitting(true);
+    setReviewError(null);
+    setReviewSuccess(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/doctors/${doctor.id}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: selectedRating, comment: reviewComment.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setReviewError(body?.error || 'Could not submit review. Please try again.');
+        return;
+      }
+      // Prepend the new review locally
+      if (body?.data) {
+        setReviewList(prev => [body.data, ...prev]);
+      }
+      if (typeof body.updatedRating === 'number') setLiveRating(body.updatedRating);
+      if (typeof body.updatedReviewCount === 'number') setLiveReviewCount(body.updatedReviewCount);
+      setReviewSuccess('Thank you! Your rating has been submitted successfully.');
+      setSelectedRating(0);
+      setReviewComment('');
+    } catch {
+      setReviewError('Network error. Your review was not submitted. Please try again.');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   // ── EARLY RETURN GUARD (after all hooks) ───────────────────────────────────
   if (!isOpen || !doctor) return null;
@@ -275,7 +339,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
           >
             Verified Patient Reviews
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px]">
-              {(Array.isArray(doctor.reviews) ? doctor.reviews.length : 0)}
+              {liveReviewCount ?? (Array.isArray(doctor.reviews) ? doctor.reviews.length : 0)}
             </span>
           </button>
           <button
@@ -342,40 +406,145 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
 
               {activeTab === 'reviews' && (
                 <div className="space-y-4">
+                  {/* Summary header */}
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                     <h3 className="text-sm font-bold text-slate-800">
-                      Patient Feedback ({doctor.reviewCount} total ratings)
+                      Patient Feedback ({liveReviewCount ?? doctor.reviewCount} total ratings)
                     </h3>
                     <div className="flex items-center gap-1 text-sm font-bold text-slate-900">
-                      <Star className="w-4 h-4 fill-amber-400 text-amber-500" /> {doctor.rating} / 5.0
+                      <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                      {liveRating ?? doctor.rating} / 5.0
                     </div>
                   </div>
 
-                  {(Array.isArray(doctor.reviews) ? doctor.reviews : []).map((rev) => (
-                    <div key={rev.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-slate-900">{rev.author}</span>
-                            {rev.verified && (
-                              <span className="text-[10px] font-semibold text-teal-700 bg-teal-100 px-1.5 py-0.2 rounded">
-                                Verified Patient
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[11px] text-slate-400">{rev.city} • {rev.date}</span>
-                        </div>
-                        <div className="flex text-amber-400">
-                          {Array.from({ length: rev.rating }).map((_, i) => (
-                            <Star key={i} className="w-3.5 h-3.5 fill-current" />
-                          ))}
-                        </div>
+                  {/* ── Rate this doctor ── */}
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3">
+                    <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                      Rate this Doctor
+                    </h4>
+
+                    {/* Success message */}
+                    {reviewSuccess && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        {reviewSuccess}
                       </div>
-                      <p className="text-xs text-slate-700 leading-relaxed italic">
-                        "{rev.comment}"
-                      </p>
+                    )}
+
+                    {/* Error message */}
+                    {reviewError && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-rose-800 bg-rose-50 border border-rose-200 px-3 py-2 rounded-xl">
+                        <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                        {reviewError}
+                      </div>
+                    )}
+
+                    {/* 5-star selector */}
+                    <div className="flex items-center gap-1">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => {
+                            setSelectedRating(star);
+                            setReviewError(null);
+                            setReviewSuccess(null);
+                          }}
+                          onMouseEnter={() => setHoverRating(star)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          className="cursor-pointer transition-transform hover:scale-110 focus:outline-none"
+                          aria-label={`Rate ${star} star${star > 1 ? 's' : ''}`}
+                          disabled={reviewSubmitting}
+                        >
+                          <Star
+                            className={`w-7 h-7 transition-colors ${
+                              star <= (hoverRating || selectedRating)
+                                ? 'fill-amber-400 text-amber-400'
+                                : 'text-slate-300 fill-slate-100'
+                            }`}
+                          />
+                        </button>
+                      ))}
+                      {(hoverRating || selectedRating) > 0 && (
+                        <span className="ml-2 text-xs font-bold text-amber-700">
+                          {['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent'][hoverRating || selectedRating]}
+                        </span>
+                      )}
                     </div>
-                  ))}
+
+                    {/* Optional comment */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1 block">
+                        Reason / Feedback <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                      </label>
+                      <textarea
+                        value={reviewComment}
+                        onChange={e => setReviewComment(e.target.value)}
+                        placeholder="Share your experience with this doctor (optional)…"
+                        rows={2}
+                        maxLength={500}
+                        disabled={reviewSubmitting}
+                        className="w-full text-xs rounded-xl border border-amber-200 bg-white px-3 py-2 focus:outline-none focus:border-amber-400 resize-none placeholder-slate-400 text-slate-800"
+                      />
+                      <div className="text-right text-[10px] text-slate-400">{reviewComment.length}/500</div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSubmitReview}
+                      disabled={reviewSubmitting || selectedRating === 0}
+                      className={`w-full py-2.5 rounded-xl text-xs font-bold tracking-wide transition-all flex items-center justify-center gap-2 ${
+                        reviewSubmitting || selectedRating === 0
+                          ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                          : 'bg-[#032F31] hover:bg-[#074245] text-[#FAE58D] cursor-pointer shadow-sm'
+                      }`}
+                    >
+                      {reviewSubmitting ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Submitting…
+                        </>
+                      ) : (
+                        <>
+                          <Star className="w-3.5 h-3.5" /> Submit Rating
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Existing reviews list */}
+                  {reviewList.length === 0 && !reviewSuccess ? (
+                    <div className="text-center py-8 text-xs text-slate-400">
+                      No reviews yet. Be the first to rate this doctor!
+                    </div>
+                  ) : (
+                    reviewList.map((rev) => (
+                      <div key={rev.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-slate-900">{rev.author}</span>
+                              {rev.verified && (
+                                <span className="text-[10px] font-semibold text-teal-700 bg-teal-100 px-1.5 py-0.2 rounded">
+                                  Verified Patient
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-slate-400">{rev.city} • {rev.date}</span>
+                          </div>
+                          <div className="flex text-amber-400">
+                            {Array.from({ length: rev.rating }).map((_, i) => (
+                              <Star key={i} className="w-3.5 h-3.5 fill-current" />
+                            ))}
+                          </div>
+                        </div>
+                        {rev.comment && (
+                          <p className="text-xs text-slate-700 leading-relaxed italic">
+                            &ldquo;{rev.comment}&rdquo;
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
 

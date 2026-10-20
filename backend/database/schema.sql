@@ -236,5 +236,26 @@ CREATE TABLE saved_doctors (
   INDEX idx_saved_doctor (doctor_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- 11. DOCTOR REVIEWS & RATINGS (Patient Ratings 1-5 Stars & Optional Feedback)
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS doctor_reviews;
+CREATE TABLE doctor_reviews (
+  id            VARCHAR(36)  NOT NULL, -- UUID string
+  doctor_id     VARCHAR(36)  NOT NULL, -- FK -> doctor_profiles.id
+  patient_id    VARCHAR(255) NULL,     -- FK -> profiles.id (optional)
+  patient_name  VARCHAR(255) NOT NULL DEFAULT 'Verified Patient',
+  patient_city  VARCHAR(100) NULL DEFAULT 'India',
+  rating        INT          NOT NULL, -- 1 to 5 stars
+  comment       TEXT         NULL,     -- Optional patient review reason/feedback
+  verified      BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  
+  PRIMARY KEY (id),
+  INDEX idx_doctor_reviews_doc (doctor_id),
+  INDEX idx_doctor_reviews_patient (patient_id),
+  INDEX idx_doctor_reviews_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;

@@ -431,6 +431,24 @@ export async function initDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS doctor_reviews (
+        id              VARCHAR(36)  NOT NULL,
+        doctor_id       VARCHAR(36)  NOT NULL,
+        patient_id      VARCHAR(255) NULL,
+        patient_name    VARCHAR(255) NOT NULL DEFAULT 'Verified Patient',
+        patient_city    VARCHAR(100) NULL DEFAULT 'India',
+        rating          INT          NOT NULL,
+        comment         TEXT         NULL,
+        verified        BOOLEAN      NOT NULL DEFAULT TRUE,
+        created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        INDEX idx_doctor_reviews_doc (doctor_id),
+        INDEX idx_doctor_reviews_patient (patient_id),
+        INDEX idx_doctor_reviews_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     // 2. Check if doctors are seeded
     const [docRows] = await connection.query('SELECT COUNT(*) as cnt FROM doctor_profiles');
     if (docRows[0].cnt === 0) {

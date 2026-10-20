@@ -1,5 +1,5 @@
 import { requireAuth } from '../middleware/auth.js';
-﻿import express from 'express';
+import express from 'express';
 import { uploadPhoto, uploadDocument } from '../middleware/upload.js';
 import { 
   getDoctors, 
@@ -15,7 +15,9 @@ import {
   handleDocumentUpload,
   getSavedDoctors,
   saveDoctor,
-  removeSavedDoctor
+  removeSavedDoctor,
+  getDoctorReviews,
+  addDoctorReview,
 } from '../controllers/doctorsController.js';
 
 const router = express.Router();
@@ -35,6 +37,8 @@ router.post('/register', registerDoctor);
 router.get('/profile/by-user/:userId', getDoctorProfileByUserId);
 router.get('/:id/stats', getDoctorStats);
 router.patch('/:id/photo', uploadDoctorPhoto);
+router.get('/:id/reviews', getDoctorReviews);
+router.post('/:id/reviews', requireAuth, addDoctorReview);
 router.get('/:id', getDoctorById);
 router.patch('/:id', updateDoctorProfile);
 
