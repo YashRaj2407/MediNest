@@ -203,6 +203,59 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
     setTimeout(() => setSaveBankNotice(null), 4000);
   };
 
+  // Helper to format ISO or raw dates to IST readable Date & Time for display & CSV
+  const formatTxDateTime = (rawDateStr?: string | null) => {
+    if (!rawDateStr) {
+      const now = new Date();
+      return {
+        dateTime: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }),
+        date: now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }),
+        time: now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase(),
+      };
+    }
+
+    if (typeof rawDateStr === 'string' && (rawDateStr.toLowerCase().includes('today') || rawDateStr.toLowerCase().includes('tomorrow'))) {
+      const timeMatch = rawDateStr.match(/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)/i);
+      const now = new Date();
+      const datePart = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+      const timePart = timeMatch ? timeMatch[1].toUpperCase() : now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
+      return {
+        dateTime: `${datePart}, ${timePart}`,
+        date: datePart,
+        time: timePart,
+      };
+    }
+
+    const d = new Date(rawDateStr);
+    if (isNaN(d.getTime())) {
+      return {
+        dateTime: String(rawDateStr),
+        date: String(rawDateStr),
+        time: '',
+      };
+    }
+
+    const datePart = d.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const timePart = d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).toUpperCase();
+
+    return {
+      dateTime: `${datePart}, ${timePart}`,
+      date: datePart,
+      time: timePart,
+    };
+  };
+
   // CSV Statement Generator
   const handleExportStatement = () => {
     if (effectiveTransactions.length === 0) {
@@ -210,26 +263,44 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
       return;
     }
 
-    const headers = ['Transaction ID', 'Payment Ref', 'Date & Time', 'Patient Name', 'Consultation Type', 'Amount (INR)', 'Payment Status', 'Settlement Status'];
-    const rows = effectiveTransactions.map(tx => [
-      `"${tx.payment_id}"`,
-      `"${tx.razorpay_payment_id || tx.payment_id}"`,
-      `"${tx.paid_at || tx.start_datetime}"`,
-      `"${tx.patient_name}"`,
-      `"${tx.consultation_type?.toUpperCase()}"`,
-      tx.amount_inr,
-      `"${tx.payment_status?.toUpperCase()}"`,
-      `"Scheduled for Friday Transfer"`
-    ]);
+    const headers = [
+      'Transaction ID',
+      'Payment Ref',
+      'Date & Time',
+      'Date',
+      'Time',
+      'Patient Name',
+      'Consultation Type',
+      'Amount (INR)',
+      'Payment Status',
+      'Settlement Status'
+    ];
+    const rows = effectiveTransactions.map(tx => {
+      const dt = formatTxDateTime(tx.paid_at || tx.start_datetime);
+      return [
+        `"${tx.payment_id}"`,
+        `"${tx.razorpay_payment_id || tx.payment_id}"`,
+        `"${dt.dateTime}"`,
+        `"${dt.date}"`,
+        `"${dt.time}"`,
+        `"${tx.patient_name || 'Verified Patient'}"`,
+        `"${tx.consultation_type?.toUpperCase() || 'VIDEO'}"`,
+        tx.amount_inr,
+        `"${tx.payment_status?.toUpperCase() || 'PAID'}"`,
+        `"Scheduled for Friday Transfer"`
+      ];
+    });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `MediNest_Earnings_Statement_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `MediNest_Earnings_Statement_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Calculate next Friday date for settlements
@@ -634,7 +705,7 @@ export const DoctorEarningsTab: React.FC<DoctorEarningsTabProps> = ({
                         {tx.payment_method || 'Razorpay UPI'}
                       </span>
                       <span className="block text-[10px] text-slate-400">
-                        {tx.paid_at ? new Date(tx.paid_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'Today'}
+                        {formatTxDateTime(tx.paid_at || tx.start_datetime).dateTime}
                       </span>
                     </td>
 
