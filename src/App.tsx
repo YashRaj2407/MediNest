@@ -142,42 +142,10 @@ export default function App() {
               return;
             }
           }
-
-          // If the user is actively completing a Doctor flow in the auth modal, do NOT auto-sync a patient profile
-          if (isUnifiedAuthOpen && unifiedAuthRole === 'doctor') {
-            return;
-          }
-
-          // Fallback / First-time patient user sync
-          setUser({
-            id: clerkUser.id,
-            name,
-            email,
-            phone,
-            isLoggedIn: true,
-          });
-
-          fetch(`${API_BASE_URL}/auth/sync-profile`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: clerkUser.id,
-              email,
-              fullName: clerkFullName || name,
-              phone,
-            }),
-          }).catch(() => {});
+          // Note: If no profile exists in MySQL, the user is in the middle of registration.
+          // We DO NOT auto-create a patient profile. Registration handlers create the correct role explicitly.
         })
-        .catch(() => {
-          if (isUnifiedAuthOpen && unifiedAuthRole === 'doctor') return;
-          setUser({
-            id: clerkUser.id,
-            name,
-            email,
-            phone,
-            isLoggedIn: true,
-          });
-        });
+        .catch(() => {});
     } else if (!isClerkSignedIn && user.isLoggedIn && !loggedInDoctor && !loggedInAdmin) {
       setUser({
         name: 'Guest Patient',
@@ -977,6 +945,7 @@ export default function App() {
           initialRole={unifiedAuthRole}
           initialMode={unifiedAuthMode}
           customMessage={authCustomMessage}
+          onRoleChange={(role) => setUnifiedAuthRole(role)}
           onPatientLoginSuccess={handlePatientLoginSuccess}
           onDoctorLoginSuccess={handleDoctorLoginSuccess}
           onAdminLoginSuccess={handleAdminLoginSuccess}

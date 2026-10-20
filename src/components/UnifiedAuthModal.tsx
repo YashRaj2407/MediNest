@@ -44,6 +44,7 @@ interface UnifiedAuthModalProps {
   onPatientLoginSuccess: (user: UserProfile) => void;
   onDoctorLoginSuccess: (doctor: DoctorAuthData) => void;
   onAdminLoginSuccess: (admin: AdminAuthData) => void;
+  onRoleChange?: (role: AuthRole) => void;
 }
 
 export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
@@ -54,7 +55,8 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
   customMessage,
   onPatientLoginSuccess,
   onDoctorLoginSuccess,
-  onAdminLoginSuccess
+  onAdminLoginSuccess,
+  onRoleChange
 }) => {
   // Master selection states
   const [selectedRole, setSelectedRole] = useState<AuthRole>(initialRole);
@@ -111,9 +113,10 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
 
-  // Synchronize on modal open or prop change
+  // Synchronize on modal open ONLY (never reset state during ongoing authentication)
+  const prevIsOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       setSelectedRole(initialRole);
       setActiveMode(initialMode);
       setErrorMessage(null);
@@ -121,15 +124,15 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
       setLoading(false);
       setPendingPatientVerification(false);
 
-      if (initialRole === 'doctor' && isSignedIn && clerk.user) {
-        const email = clerk.user.primaryEmailAddress?.emailAddress || '';
-        const name = clerk.user.fullName || (clerk.user.firstName ? `${clerk.user.firstName} ${clerk.user.lastName || ''}`.trim() : '');
-        setDocEmail(email);
-        setDocCreatedUserId(clerk.user.id);
+      if (initialRole === 'doctor') {
+        const email = clerk.user?.primaryEmailAddress?.emailAddress || '';
+        const name = clerk.user?.fullName || (clerk.user?.firstName ? `${clerk.user.firstName} ${clerk.user.lastName || ''}`.trim() : '');
+        if (email) setDocEmail(email);
+        if (clerk.user?.id) setDocCreatedUserId(clerk.user.id);
         if (name && !name.toLowerCase().includes('@')) {
           setDocName(name.replace(/^Dr\.?\s*/i, ''));
         }
-        if (initialMode === 'signup') {
+        if (initialMode === 'signup' && isSignedIn) {
           setDocStep('profile');
         } else {
           setDocStep('creds');
@@ -138,7 +141,8 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
         setDocStep('creds');
       }
     }
-  }, [isOpen, initialRole, initialMode, isSignedIn, clerk.user]);
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, initialRole, initialMode]);
 
   // Resend cooldown timer (patient)
   useEffect(() => {
@@ -540,7 +544,9 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
         setDocCreatedUserId(uid);
         setSuccessMessage('Email verified! Now fill in your professional profile.');
         setDocVerifyCode('');
+        setSelectedRole('doctor');
         setDocStep('profile');
+        if (onRoleChange) onRoleChange('doctor');
       } else {
         setDocVerifyError(`Verification incomplete: ${result.status}`);
       }
@@ -787,6 +793,7 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                 type="button"
                 onClick={() => {
                   setSelectedRole('patient');
+                  if (onRoleChange) onRoleChange('patient');
                   setErrorMessage(null);
                   setSuccessMessage(null);
                 }}
@@ -817,6 +824,7 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                 type="button"
                 onClick={() => {
                   setSelectedRole('doctor');
+                  if (onRoleChange) onRoleChange('doctor');
                   setErrorMessage(null);
                   setSuccessMessage(null);
                   if (isSignedIn && clerk.user) {
