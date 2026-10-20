@@ -256,7 +256,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
               />
               <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full bg-white text-[#032F31] text-xs font-bold shadow-xs flex items-center gap-1">
                 <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
-                {doctor.rating} ({doctor.reviewCount})
+                {liveRating ?? doctor.rating} ({liveReviewCount ?? doctor.reviewCount})
               </span>
             </div>
 
@@ -339,7 +339,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
           >
             Verified Patient Reviews
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px]">
-              {liveReviewCount ?? (Array.isArray(doctor.reviews) ? doctor.reviews.length : 0)}
+              {reviewList.length > 0 ? reviewList.length : (liveReviewCount ?? (Array.isArray(doctor.reviews) ? doctor.reviews.length : 0))}
             </span>
           </button>
           <button
