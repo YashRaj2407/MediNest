@@ -119,10 +119,26 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
       setErrorMessage(null);
       setSuccessMessage(null);
       setLoading(false);
-      setDocStep('creds');
       setPendingPatientVerification(false);
+
+      if (initialRole === 'doctor' && isSignedIn && clerk.user) {
+        const email = clerk.user.primaryEmailAddress?.emailAddress || '';
+        const name = clerk.user.fullName || (clerk.user.firstName ? `${clerk.user.firstName} ${clerk.user.lastName || ''}`.trim() : '');
+        setDocEmail(email);
+        setDocCreatedUserId(clerk.user.id);
+        if (name && !name.toLowerCase().includes('@')) {
+          setDocName(name.replace(/^Dr\.?\s*/i, ''));
+        }
+        if (initialMode === 'signup') {
+          setDocStep('profile');
+        } else {
+          setDocStep('creds');
+        }
+      } else {
+        setDocStep('creds');
+      }
     }
-  }, [isOpen, initialRole, initialMode]);
+  }, [isOpen, initialRole, initialMode, isSignedIn, clerk.user]);
 
   // Resend cooldown timer (patient)
   useEffect(() => {
@@ -365,7 +381,9 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
           onDoctorLoginSuccess(body.data as DoctorAuthData);
           onClose();
         } else {
-          setErrorMessage(body?.error || 'No verified doctor profile found for this account. Please register first.');
+          setDocCreatedUserId(verifiedDocId);
+          setSuccessMessage('Account verified! Please fill in your professional details to complete your Doctor Registration.');
+          setDocStep('profile');
         }
       } else {
         setErrorMessage(`Doctor sign in requires additional verification: ${result.status}`);
@@ -450,6 +468,45 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
         msg.toLowerCase().includes('already') ||
         err?.errors?.[0]?.code === 'form_identifier_exists';
       if (isDuplicate) {
+        if (isSignInLoaded && signIn) {
+          try {
+            const signInRes = await signIn.create({
+              identifier: docEmail.trim(),
+              password: docPassword,
+            });
+            if (signInRes.status === 'complete') {
+              await setSignInActive({ session: signInRes.createdSessionId });
+              const verifiedUid = (signInRes as any).createdUserId || clerk.user?.id || '';
+              setDocCreatedUserId(verifiedUid);
+
+              let token = '';
+              try { if (getToken) token = (await getToken()) || ''; } catch (_) {}
+              const docRes = await fetch(`${API_BASE_URL}/doctors/login`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                  ...(verifiedUid ? { 'x-user-id': verifiedUid } : {}),
+                  'x-user-role': 'doctor',
+                },
+                body: JSON.stringify({ email: docEmail.trim() }),
+              });
+              const docBody = await docRes.json();
+              if (docRes.ok && docBody.success && docBody.data) {
+                onDoctorLoginSuccess(docBody.data as DoctorAuthData);
+                onClose();
+                return;
+              } else {
+                setSuccessMessage('Email verified! Please complete your Doctor Registration details below.');
+                setDocStep('profile');
+                return;
+              }
+            }
+          } catch (signInErr: any) {
+            setErrorMessage('This email is already registered. Please enter your existing password to continue, or switch to Sign In.');
+            return;
+          }
+        }
         setErrorMessage('This email is already registered. Please sign in to your Doctor Portal instead.');
       } else {
         setErrorMessage(msg);
@@ -561,6 +618,12 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
       const body = await res.json();
       if (!res.ok || !body.success) {
         setErrorMessage(body?.error || 'Registration failed. Please review your details.');
+        return;
+      }
+
+      if (body.data) {
+        onDoctorLoginSuccess(body.data as DoctorAuthData);
+        onClose();
         return;
       }
 
@@ -678,6 +741,9 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                 setActiveMode('signup');
                 setErrorMessage(null);
                 setSuccessMessage(null);
+                if (selectedRole === 'doctor' && isSignedIn && clerk.user) {
+                  setDocStep('profile');
+                }
               }}
               className={`py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeMode === 'signup'
@@ -753,6 +819,18 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                   setSelectedRole('doctor');
                   setErrorMessage(null);
                   setSuccessMessage(null);
+                  if (isSignedIn && clerk.user) {
+                    const email = clerk.user.primaryEmailAddress?.emailAddress || '';
+                    const name = clerk.user.fullName || (clerk.user.firstName ? `${clerk.user.firstName} ${clerk.user.lastName || ''}`.trim() : '');
+                    setDocEmail(email);
+                    setDocCreatedUserId(clerk.user.id);
+                    if (name && !name.toLowerCase().includes('@')) {
+                      setDocName(name.replace(/^Dr\.?\s*/i, ''));
+                    }
+                    if (activeMode === 'signup') {
+                      setDocStep('profile');
+                    }
+                  }
                 }}
                 className={`p-3 rounded-2xl text-left border transition-all cursor-pointer ${
                   selectedRole === 'doctor'

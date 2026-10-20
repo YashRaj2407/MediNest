@@ -348,7 +348,7 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
         },
         body: JSON.stringify({
           email: user.primaryEmailAddress?.emailAddress || regEmail,
-          fullName: user.fullName || regName,
+          fullName: regName.trim() || user.fullName,
           phone: formattedPhone,
           name: regName.startsWith('Dr.') ? regName : `Dr. ${regName}`,
           registrationNumber: regRegNumber,
@@ -367,6 +367,12 @@ export const DoctorAuthModal: React.FC<DoctorAuthModalProps> = ({
       const body = await res.json();
       if (!res.ok || !body.success) {
         setRegError(body?.error || 'Registration failed. Please try again.');
+        return;
+      }
+
+      if (body.data) {
+        onDoctorLoginSuccess(body.data as DoctorAuthData);
+        onClose();
         return;
       }
 

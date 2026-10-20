@@ -61,6 +61,14 @@ export async function syncUserProfile(req, res) {
       });
     }
 
+    // Helper to detect if a name is merely an email address or email prefix fallback
+    const isEmailPrefix = (val) => {
+      if (!val) return true;
+      const cleanVal = val.toLowerCase().trim();
+      const prefix = cleanEmail.split('@')[0].toLowerCase();
+      return cleanVal === prefix || cleanVal === cleanEmail;
+    };
+
     // ── 2. Determine Authoritative Role ─────────────────────────────────────────────
     let assignedRole = role && ['patient', 'doctor', 'admin'].includes(role) ? role : 'patient';
 
@@ -73,25 +81,49 @@ export async function syncUserProfile(req, res) {
       [userId]
     );
 
-    if (existingDocByUserId) {
+    // Check if this email is already associated with an existing doctor profile
+    const [[existingDocByEmail]] = await pool.query(
+      `SELECT dp.id, dp.user_id, dp.name
+       FROM doctor_profiles dp
+       JOIN profiles p ON dp.user_id = p.id
+       WHERE LOWER(p.email) = ?`,
+      [cleanEmail]
+    );
+
+    if (existingDocByUserId || (existingDocByEmail && existingDocByEmail.user_id === userId)) {
+      assignedRole = 'doctor';
+    } else if (existingRows.length > 0 && existingRows[0].role === 'doctor') {
       assignedRole = 'doctor';
     } else if (existingRows.length > 0 && existingRows[0].role) {
-      assignedRole = existingRows[0].role;
+      // Preserve existing profile role unless explicitly being updated
+      assignedRole = role && ['patient', 'doctor', 'admin'].includes(role) ? role : existingRows[0].role;
     }
 
     // ── 3. Guarantee `profiles` row exists BEFORE any doctor relationship ───────────
     if (existingRows.length > 0) {
+      // Determine preserved full name: NEVER overwrite a real name with an email prefix
+      let finalFullName = existingRows[0].full_name;
+      if (fullName && !isEmailPrefix(fullName)) {
+        finalFullName = fullName.trim();
+      } else if (!finalFullName || isEmailPrefix(finalFullName)) {
+        if (existingDocByUserId?.name) {
+          finalFullName = existingDocByUserId.name.replace(/^Dr\.?\s*/i, '').trim();
+        } else {
+          finalFullName = fullName || existingRows[0].full_name || cleanEmail.split('@')[0];
+        }
+      }
+
       // Existing profile for this user ID: update details safely
       await pool.query(
         `UPDATE profiles SET
            email = ?,
-           full_name = COALESCE(?, full_name),
+           full_name = ?,
            role = ?,
            phone = COALESCE(?, phone),
            avatar_url = COALESCE(?, avatar_url),
            account_status = 'active'
          WHERE id = ?`,
-        [cleanEmail, fullName || null, assignedRole, phone || null, avatarUrl || null, userId]
+        [cleanEmail, finalFullName, assignedRole, phone || null, avatarUrl || null, userId]
       );
     } else {
       // Brand new profile for this user ID.
@@ -137,10 +169,18 @@ export async function syncUserProfile(req, res) {
       }
 
       // Insert fresh profile for this new user identity
+      let initialName = fullName;
+      if (!initialName || isEmailPrefix(initialName)) {
+        if (existingDocByEmail?.name) {
+          initialName = existingDocByEmail.name.replace(/^Dr\.?\s*/i, '').trim();
+        } else {
+          initialName = fullName || cleanEmail.split('@')[0];
+        }
+      }
       await pool.query(
         `INSERT INTO profiles (id, email, full_name, role, phone, avatar_url, account_status)
          VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-        [userId, cleanEmail, fullName || cleanEmail, assignedRole, phone || null, avatarUrl || null]
+        [userId, cleanEmail, initialName, assignedRole, phone || null, avatarUrl || null]
       );
     }
 

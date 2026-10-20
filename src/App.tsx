@@ -83,7 +83,8 @@ export default function App() {
 
     if (isClerkSignedIn && clerkUser) {
       const email = clerkUser.primaryEmailAddress?.emailAddress || '';
-      const name = clerkUser.fullName || clerkUser.firstName || email.split('@')[0] || 'User';
+      const clerkFullName = clerkUser.fullName || (clerkUser.firstName ? `${clerkUser.firstName} ${clerkUser.lastName || ''}`.trim() : '');
+      const name = clerkFullName || email.split('@')[0] || 'User';
       const phone = clerkUser.primaryPhoneNumber?.phoneNumber || '';
 
       // Check authoritative role from MySQL database first
@@ -95,8 +96,14 @@ export default function App() {
             if (dbRole === 'doctor' && !loggedInDoctor) {
               // User is registered as a doctor — restore doctor portal session
               try {
+                let token = '';
+                try { if (getToken) token = (await getToken()) || ''; } catch (_) {}
                 const docRes = await fetch(`${API_BASE_URL}/doctors/profile/by-user/${clerkUser.id}`, {
-                  headers: { 'x-user-id': clerkUser.id, 'x-user-role': 'doctor' }
+                  headers: {
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                    'x-user-id': clerkUser.id,
+                    'x-user-role': 'doctor'
+                  }
                 });
                 const docBody = await docRes.json();
                 if (docRes.ok && docBody.success && docBody.data) {
@@ -118,21 +125,30 @@ export default function App() {
                 }
               } catch (_e) {}
               // If doctor profile fetch fails, still set as patient UI so the page is not blank
-              setUser({ id: clerkUser.id, name, email, phone, isLoggedIn: true });
+              setUser({ id: clerkUser.id, name: body.data.full_name || name, email, phone, isLoggedIn: true });
               return;
             } else if (dbRole === 'patient') {
+              // If user is currently in Doctor Auth modal, don't trap them in patient mode
+              if (isUnifiedAuthOpen && unifiedAuthRole === 'doctor') {
+                return;
+              }
               setUser({
                 id: clerkUser.id,
-                name,
+                name: body.data.full_name || name,
                 email,
-                phone,
+                phone: body.data.phone || phone,
                 isLoggedIn: true,
               });
               return;
             }
           }
 
-          // Fallback / First-time user sync
+          // If the user is actively completing a Doctor flow in the auth modal, do NOT auto-sync a patient profile
+          if (isUnifiedAuthOpen && unifiedAuthRole === 'doctor') {
+            return;
+          }
+
+          // Fallback / First-time patient user sync
           setUser({
             id: clerkUser.id,
             name,
@@ -147,12 +163,13 @@ export default function App() {
             body: JSON.stringify({
               userId: clerkUser.id,
               email,
-              fullName: name,
+              fullName: clerkFullName || name,
               phone,
             }),
           }).catch(() => {});
         })
         .catch(() => {
+          if (isUnifiedAuthOpen && unifiedAuthRole === 'doctor') return;
           setUser({
             id: clerkUser.id,
             name,
@@ -589,19 +606,38 @@ export default function App() {
   };
 
   // -- Doctor Portal Handlers ------------------------------------------------
-  const handleOpenDoctorPortal = () => {
-    if (user.isLoggedIn && !loggedInDoctor) {
-      showToast('You are currently signed in as a Patient. Please sign out of your patient account to access the Doctor Portal.');
-      setIsDashboardOpen(true);
-      return;
-    }
+  const handleOpenDoctorPortal = async () => {
     if (loggedInDoctor) {
       setIsDoctorPortalOpen(true);
-    } else {
-      setUnifiedAuthRole('doctor');
-      setUnifiedAuthMode('signin');
-      setIsUnifiedAuthOpen(true);
+      return;
     }
+
+    const currentUserId = clerkUser?.id || (user.isLoggedIn ? user.id : null);
+    if (currentUserId) {
+      // Check if user already has a doctor profile in MySQL database
+      try {
+        let token = '';
+        try { if (getToken) token = (await getToken()) || ''; } catch (_) {}
+        const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
+        const docRes = await fetch(`${API_BASE_URL}/doctors/profile/by-user/${currentUserId}`, {
+          headers: {
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            'x-user-id': currentUserId,
+            'x-user-role': 'doctor'
+          }
+        });
+        const docBody = await docRes.json();
+        if (docRes.ok && docBody.success && docBody.data) {
+          handleDoctorLoginSuccess(docBody.data as DoctorAuthData);
+          return;
+        }
+      } catch (_) {}
+    }
+
+    // Open Doctor Auth modal to sign in or complete doctor registration
+    setUnifiedAuthRole('doctor');
+    setUnifiedAuthMode(currentUserId ? 'signup' : 'signin');
+    setIsUnifiedAuthOpen(true);
   };
 
   const handleDoctorLoginSuccess = async (doctorData: DoctorAuthData) => {
