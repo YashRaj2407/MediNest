@@ -437,6 +437,29 @@ export default function App() {
     setActiveDoctorForProfile(doctor);
   };
 
+  const handleDoctorRatingUpdate = (doctorId: string, newRating: number, newCount: number) => {
+    setDoctors(prev => prev.map(doc => {
+      if (doc.id === doctorId) {
+        return {
+          ...doc,
+          rating: newRating,
+          reviewCount: newCount,
+        };
+      }
+      return doc;
+    }));
+    setActiveDoctorForProfile(prev => {
+      if (prev && prev.id === doctorId) {
+        return {
+          ...prev,
+          rating: newRating,
+          reviewCount: newCount,
+        };
+      }
+      return prev;
+    });
+  };
+
   const handleDirectBook = (doctor: Doctor) => {
     if (!user.isLoggedIn) {
       setPendingBooking({
@@ -836,6 +859,7 @@ export default function App() {
             onProceedToBooking={handleProceedToBookingFromProfile}
             savedDoctorIds={savedDoctorIds}
             onToggleSaveDoctor={handleToggleSaveDoctor}
+            onRatingUpdate={handleDoctorRatingUpdate}
           />
         </DoctorPortalErrorBoundary>
       )}

@@ -787,14 +787,13 @@ export async function addDoctorReview(req, res) {
       [reviewId, doctorId, patientId, authorName, authorCity, roundRating, reviewComment]
     );
 
-    // Recalculate average rating & review count for doctor profile
-    const [[agg]] = await pool.query(
-      `SELECT AVG(rating) as avg_rating, COUNT(*) as cnt FROM doctor_reviews WHERE doctor_id = ?`,
-      [doctorId]
-    );
-
-    const updatedRating = agg?.avg_rating ? Math.round(Number(agg.avg_rating) * 10) / 10 : roundRating;
-    const updatedReviewCount = agg?.cnt ? Number(agg.cnt) : 1;
+    // Calculate updated review count and weighted average rating based on current doctor profile
+    const prevCount = docs[0].review_count ? Number(docs[0].review_count) : 0;
+    const prevRating = docs[0].rating ? Number(docs[0].rating) : roundRating;
+    const updatedReviewCount = prevCount + 1;
+    const updatedRating = prevCount > 0 
+      ? Math.round(((prevRating * prevCount + roundRating) / updatedReviewCount) * 10) / 10 
+      : roundRating;
 
     await pool.query(
       `UPDATE doctor_profiles SET rating = ?, review_count = ? WHERE id = ?`,

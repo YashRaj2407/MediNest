@@ -531,7 +531,7 @@ export const DoctorList: React.FC<DoctorListProps> = ({
                         />
                         <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-full bg-[#FAF7EE] border border-[#D5CDBC] shadow-xs text-[10px] font-bold text-[#032F31] flex items-center gap-0.5">
                           <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
-                          {doctor.rating}
+                          {typeof doctor.rating === 'number' ? doctor.rating.toFixed(1) : doctor.rating} ({doctor.reviewCount || 0})
                         </span>
                       </div>
 

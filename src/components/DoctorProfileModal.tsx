@@ -38,6 +38,7 @@ interface DoctorProfileModalProps {
   ) => void;
   savedDoctorIds?: string[];
   onToggleSaveDoctor?: (doctorId: string) => void;
+  onRatingUpdate?: (doctorId: string, newRating: number, newCount: number) => void;
 }
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
@@ -49,6 +50,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   onProceedToBooking,
   savedDoctorIds = [],
   onToggleSaveDoctor,
+  onRatingUpdate,
 }) => {
   // ── ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURN ──────────────────────
   const [consultationMode, setConsultationMode] = useState<ConsultationType>('video');
@@ -71,6 +73,20 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [liveRating, setLiveRating] = useState<number | null>(null);
   const [liveReviewCount, setLiveReviewCount] = useState<number | null>(null);
+
+  // Synchronized rating and review count for the active doctor
+  const displayRating = liveRating !== null ? liveRating : (doctor?.rating ? Number(doctor.rating) : 4.9);
+  const displayReviewCount = liveReviewCount !== null ? liveReviewCount : (doctor?.reviewCount !== undefined ? Number(doctor.reviewCount) : (Array.isArray(doctor?.reviews) ? doctor.reviews.length : 0));
+
+  // Reset live rating state when switching between doctors
+  useEffect(() => {
+    setLiveRating(null);
+    setLiveReviewCount(null);
+    setSelectedRating(0);
+    setReviewComment('');
+    setReviewSuccess(null);
+    setReviewError(null);
+  }, [doctor?.id]);
 
   // Derived: is this doctor saved by the patient?
   const isSaved = doctor ? savedDoctorIds.includes(doctor.id) : false;
@@ -211,8 +227,20 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
       if (body?.data) {
         setReviewList(prev => [body.data, ...prev]);
       }
-      if (typeof body.updatedRating === 'number') setLiveRating(body.updatedRating);
-      if (typeof body.updatedReviewCount === 'number') setLiveReviewCount(body.updatedReviewCount);
+      const nextCount = typeof body.updatedReviewCount === 'number' 
+        ? body.updatedReviewCount 
+        : (displayReviewCount + 1);
+      const nextRating = typeof body.updatedRating === 'number'
+        ? body.updatedRating
+        : Math.round(((displayRating * displayReviewCount + selectedRating) / nextCount) * 10) / 10;
+
+      setLiveRating(nextRating);
+      setLiveReviewCount(nextCount);
+
+      // Propagate to parent (App.tsx) so ALL doctor cards/lists update immediately
+      if (doctor) {
+        onRatingUpdate?.(doctor.id, nextRating, nextCount);
+      }
       setReviewSuccess('Thank you! Your rating has been submitted successfully.');
       setSelectedRating(0);
       setReviewComment('');
@@ -256,7 +284,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
               />
               <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full bg-white text-[#032F31] text-xs font-bold shadow-xs flex items-center gap-1">
                 <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
-                {liveRating ?? doctor.rating} ({liveReviewCount ?? doctor.reviewCount})
+                {displayRating.toFixed(1)} ({displayReviewCount})
               </span>
             </div>
 
@@ -339,7 +367,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
           >
             Verified Patient Reviews
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px]">
-              {reviewList.length > 0 ? reviewList.length : (liveReviewCount ?? (Array.isArray(doctor.reviews) ? doctor.reviews.length : 0))}
+              {displayReviewCount}
             </span>
           </button>
           <button
@@ -409,11 +437,11 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   {/* Summary header */}
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                     <h3 className="text-sm font-bold text-slate-800">
-                      Patient Feedback ({liveReviewCount ?? doctor.reviewCount} total ratings)
+                      Patient Feedback ({displayReviewCount} total ratings)
                     </h3>
                     <div className="flex items-center gap-1 text-sm font-bold text-slate-900">
                       <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
-                      {liveRating ?? doctor.rating} / 5.0
+                      {displayRating.toFixed(1)} / 5.0
                     </div>
                   </div>
 
