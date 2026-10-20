@@ -860,6 +860,7 @@ export default function App() {
             savedDoctorIds={savedDoctorIds}
             onToggleSaveDoctor={handleToggleSaveDoctor}
             onRatingUpdate={handleDoctorRatingUpdate}
+            patientName={user?.name || clerkUser?.fullName || clerkUser?.firstName || 'Yash Dhawale'}
           />
         </DoctorPortalErrorBoundary>
       )}

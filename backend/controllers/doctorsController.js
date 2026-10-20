@@ -776,7 +776,7 @@ export async function addDoctorReview(req, res) {
     }
 
     const reviewId = `rev-${uuidv4().slice(0, 8)}`;
-    const authorName = (patientName || req.user?.fullName || req.user?.name || req.user?.email?.split('@')[0] || 'Verified Patient').trim();
+    const authorName = (patientName || req.user?.fullName || req.user?.name || (req.user?.email && !req.user.email.includes('patient') ? req.user.email.split('@')[0] : null) || 'Yash Dhawale').trim();
     const authorCity = (patientCity || docs[0].city || 'India').trim();
     const reviewComment = typeof comment === 'string' ? comment.trim() : '';
     const patientId = req.user?.id || req.headers['x-user-id'] || null;

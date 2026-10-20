@@ -39,6 +39,7 @@ interface DoctorProfileModalProps {
   savedDoctorIds?: string[];
   onToggleSaveDoctor?: (doctorId: string) => void;
   onRatingUpdate?: (doctorId: string, newRating: number, newCount: number) => void;
+  patientName?: string;
 }
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5000/api/v1';
@@ -51,6 +52,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   savedDoctorIds = [],
   onToggleSaveDoctor,
   onRatingUpdate,
+  patientName = '',
 }) => {
   // ── ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURN ──────────────────────
   const [consultationMode, setConsultationMode] = useState<ConsultationType>('video');
@@ -67,6 +69,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
   const [reviewList, setReviewList] = useState<{ id: string; author: string; city: string; rating: number; date: string; comment: string; verified: boolean }[]>([]);
   const [hoverRating, setHoverRating] = useState(0);
   const [selectedRating, setSelectedRating] = useState(0);
+  const [reviewerName, setReviewerName] = useState(patientName || '');
   const [reviewComment, setReviewComment] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState<string | null>(null);
@@ -86,7 +89,10 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
     setReviewComment('');
     setReviewSuccess(null);
     setReviewError(null);
-  }, [doctor?.id]);
+    if (patientName && patientName !== 'Verified Patient') {
+      setReviewerName(patientName);
+    }
+  }, [doctor?.id, patientName]);
 
   // Derived: is this doctor saved by the patient?
   const isSaved = doctor ? savedDoctorIds.includes(doctor.id) : false;
@@ -216,7 +222,11 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
       const res = await fetch(`${API_BASE_URL}/doctors/${doctor.id}/reviews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating: selectedRating, comment: reviewComment.trim() }),
+        body: JSON.stringify({ 
+          rating: selectedRating, 
+          comment: reviewComment.trim(),
+          patientName: reviewerName.trim() || (patientName && patientName !== 'Verified Patient' ? patientName : 'Yash Dhawale'),
+        }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -500,6 +510,22 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                       )}
                     </div>
 
+                    {/* Patient Name */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1 block">
+                        Patient Name <span className="text-slate-400 font-normal normal-case">(displayed on your review)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={reviewerName}
+                        onChange={e => setReviewerName(e.target.value)}
+                        placeholder={patientName && patientName !== 'Verified Patient' ? patientName : "e.g. Yash Dhawale"}
+                        maxLength={60}
+                        disabled={reviewSubmitting}
+                        className="w-full text-xs rounded-xl border border-amber-200 bg-white px-3 py-2 focus:outline-none focus:border-amber-400 placeholder-slate-400 text-slate-800"
+                      />
+                    </div>
+
                     {/* Optional comment */}
                     <div>
                       <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1 block">
@@ -550,7 +576,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-xs text-slate-900">{rev.author}</span>
+                              <span className="font-bold text-xs text-slate-900">{rev.author && rev.author !== 'Verified Patient' ? rev.author : (patientName && patientName !== 'Verified Patient' ? patientName : 'Yash Dhawale')}</span>
                               {rev.verified && (
                                 <span className="text-[10px] font-semibold text-teal-700 bg-teal-100 px-1.5 py-0.2 rounded">
                                   Verified Patient
