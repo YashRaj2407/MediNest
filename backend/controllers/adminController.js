@@ -195,26 +195,39 @@ export async function deletePatient(req, res) {
       [id]
     );
 
+    // Check total appointments
+    const [[{ totalAppointments }]] = await conn.query(
+      `SELECT COUNT(*) AS totalAppointments FROM appointments WHERE patient_id = ?`,
+      [id]
+    );
+
     await conn.beginTransaction();
 
-    // Soft-delete in MySQL: mark account_status = 'deleted', anonymize email to free unique constraint
-    const anonEmail = `deleted_${id}_${Date.now()}@medinest.deleted`;
-    await conn.query(
-      `UPDATE profiles SET account_status = 'deleted', email = ?, full_name = '[Deleted Patient]', phone = NULL WHERE id = ?`,
-      [anonEmail, id]
-    );
+    if (totalAppointments === 0) {
+      // No historical appointments: cleanly purge profile and dependent records
+      await conn.query(`DELETE FROM notifications WHERE user_id = ?`, [id]).catch(() => {});
+      await conn.query(`DELETE FROM saved_doctors WHERE patient_id = ?`, [id]).catch(() => {});
+      await conn.query(`DELETE FROM profiles WHERE id = ?`, [id]);
+    } else {
+      // Soft-delete in MySQL: preserve appointments for legal retention, anonymize email to free unique constraint
+      const anonEmail = `deleted_${id}_${Date.now()}@medinest.deleted`;
+      await conn.query(
+        `UPDATE profiles SET account_status = 'deleted', email = ?, full_name = '[Deleted Patient]', phone = NULL WHERE id = ?`,
+        [anonEmail, id]
+      );
+
+      // Cancel upcoming appointments
+      if (upcomingCount > 0) {
+        await conn.query(
+          `UPDATE appointments SET status = 'cancelled', cancellation_reason = 'Patient account deleted by admin'
+           WHERE patient_id = ? AND status = 'upcoming'`,
+          [id]
+        );
+      }
+    }
 
     // Attempt Clerk deletion
     const { deletedFromClerk, clerkError } = await deleteClerkUserSafely(id, patient.email);
-
-    // Cancel upcoming appointments
-    if (upcomingCount > 0) {
-      await conn.query(
-        `UPDATE appointments SET status = 'cancelled', cancellation_reason = 'Patient account deleted by admin'
-         WHERE patient_id = ? AND status = 'upcoming'`,
-        [id]
-      );
-    }
 
     await writeAudit(conn, {
       adminId, action: 'patient_deleted', targetType: 'patient', targetId: id,
@@ -223,7 +236,8 @@ export async function deletePatient(req, res) {
         originalEmail: patient.email,
         deletedFromClerk,
         clerkError,
-        upcomingAppointmentsCancelled: upcomingCount
+        upcomingAppointmentsCancelled: upcomingCount,
+        hardDeleted: totalAppointments === 0
       }
     });
     await conn.commit();
