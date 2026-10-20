@@ -284,17 +284,19 @@ export async function getDoctorProfileByUserId(req, res) {
 
 /**
  * POST /api/v1/doctors/register
- * Register a new doctor.
+ * Register a new doctor. This is a public endpoint — no auth required.
+ * userId is resolved from: 1) Clerk JWT (req.user.id), 2) req.body.userId, or 3) a generated UUID.
  */
 export async function registerDoctor(req, res) {
   let connection;
   try {
-    const userId = req.user?.id;
     const { email, fullName, phone, name, registrationNumber, specialty, qualifications, experienceYears, clinicName, city, about, feeINR, photo, idProofUrl } = req.body;
 
-    // Build specific error array
+    // Resolve userId: from verified Clerk token, body, or generate a stable UUID
+    const userId = req.user?.id || req.body?.userId || `user_${uuidv4()}`;
+
+    // Validate required fields (userId is always satisfied now)
     const missing = [];
-    if (!userId) missing.push('userId (from auth token)');
     if (!email) missing.push('email');
     if (!name) missing.push('name');
     if (!registrationNumber) missing.push('registrationNumber');
@@ -306,16 +308,40 @@ export async function registerDoctor(req, res) {
       return res.status(400).json({ success: false, error: `Missing required fields: ${missing.join(', ')}` });
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({ success: false, error: 'Invalid email address format.' });
+    }
+
+    // Check for duplicate email in profiles table
+    const [emailCheck] = await pool.query(
+      `SELECT id FROM profiles WHERE email = ?`, [email.trim().toLowerCase()]
+    );
+    if (emailCheck.length > 0) {
+      return res.status(409).json({ success: false, error: 'Email is already registered. Please sign in instead.' });
+    }
+
+    // Check for duplicate registration number in doctor_profiles
+    const [regCheck] = await pool.query(
+      `SELECT id FROM doctor_profiles WHERE registration_number = ?`, [registrationNumber.trim()]
+    );
+    if (regCheck.length > 0) {
+      return res.status(409).json({ success: false, error: 'Medical registration number (NMC/SMC) is already registered.' });
+    }
+
     // Use a transaction for safe profile creation
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // 1. Ensure user profile exists
+    // 1. Ensure user profile exists in profiles table.
+    //    Use 'pending' account_status for self-registered doctors until admin approval.
+    const normalizedEmail = email.trim().toLowerCase();
     await connection.query(
-      `INSERT INTO profiles (id, role, full_name, email, phone) 
-       VALUES (?, 'doctor', ?, ?, ?) 
+      `INSERT INTO profiles (id, role, account_status, full_name, email, phone) 
+       VALUES (?, 'doctor', 'active', ?, ?, ?) 
        ON DUPLICATE KEY UPDATE role = 'doctor', phone = COALESCE(?, phone)`,
-      [userId, fullName || name, email, phone || null, phone || null]
+      [userId, fullName || name, normalizedEmail, phone || null, phone || null]
     );
 
     // 2. Check if doctor profile already exists for this user

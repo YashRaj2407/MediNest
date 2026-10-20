@@ -635,12 +635,13 @@ export async function rescheduleAppointment(req, res) {
       });
     }
 
-    // Check for double-booking conflict with other appointments
+    // Check for double-booking conflict with other UPCOMING appointments only.
+    // Completed appointments do not block future rescheduling of the same slot.
     const [existingAppts] = await pool.query(
       `SELECT id FROM appointments 
        WHERE doctor_id = ? 
          AND id != ? 
-         AND status IN ('upcoming', 'completed')
+         AND status = 'upcoming'
          AND start_datetime < ? 
          AND end_datetime > ?`,
       [doctorId, id, sqlEnd, sqlStart]

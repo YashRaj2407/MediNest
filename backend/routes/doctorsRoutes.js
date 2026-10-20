@@ -27,9 +27,11 @@ router.post('/saved', requireAuth, saveDoctor);
 router.delete('/saved/:doctorId', requireAuth, removeSavedDoctor);
 router.get('/', getDoctors);
 router.post('/login', requireAuth, doctorLogin);
-router.post('/upload-photo', requireAuth, uploadPhoto.single('photo'), handlePhotoUpload);
-router.post('/upload-document', requireAuth, uploadDocument.single('document'), handleDocumentUpload);
-router.post('/register', requireAuth, registerDoctor);
+// Photo/document upload and registration are public during onboarding (no auth required).
+// Optional auth is handled inside registerDoctor via req.user or req.body.userId.
+router.post('/upload-photo', uploadPhoto.single('photo'), handlePhotoUpload);
+router.post('/upload-document', uploadDocument.single('document'), handleDocumentUpload);
+router.post('/register', registerDoctor);
 router.get('/profile/by-user/:userId', getDoctorProfileByUserId);
 router.get('/:id/stats', getDoctorStats);
 router.patch('/:id/photo', uploadDoctorPhoto);
