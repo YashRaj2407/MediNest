@@ -783,7 +783,7 @@ export async function addDoctorReview(req, res) {
 
     await pool.query(
       `INSERT INTO doctor_reviews (id, doctor_id, patient_id, patient_name, patient_city, rating, comment, verified, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, TRUE, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, NOW())`,
       [reviewId, doctorId, patientId, authorName, authorCity, roundRating, reviewComment]
     );
 

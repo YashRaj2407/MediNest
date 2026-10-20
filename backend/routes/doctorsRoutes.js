@@ -38,7 +38,7 @@ router.get('/profile/by-user/:userId', getDoctorProfileByUserId);
 router.get('/:id/stats', getDoctorStats);
 router.patch('/:id/photo', uploadDoctorPhoto);
 router.get('/:id/reviews', getDoctorReviews);
-router.post('/:id/reviews', requireAuth, addDoctorReview);
+router.post('/:id/reviews', addDoctorReview); // Public: no auth required to submit a rating
 router.get('/:id', getDoctorById);
 router.patch('/:id', updateDoctorProfile);
 
