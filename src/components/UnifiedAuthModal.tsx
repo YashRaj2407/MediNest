@@ -95,7 +95,12 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
   const [docCity, setDocCity] = useState(INDIAN_CITIES[0] || 'Mumbai');
   const [docAbout, setDocAbout] = useState('');
   const [docFee, setDocFee] = useState('499');
-  const [docStep, setDocStep] = useState<'creds' | 'profile' | 'done'>('creds');
+  const [docStep, setDocStep] = useState<'creds' | 'verify' | 'profile' | 'done'>('creds');
+  const [docVerifyCode, setDocVerifyCode] = useState('');
+  const [docVerifyLoading, setDocVerifyLoading] = useState(false);
+  const [docVerifyError, setDocVerifyError] = useState('');
+  const [docCreatedUserId, setDocCreatedUserId] = useState('');
+  const [docResendCooldown, setDocResendCooldown] = useState(0);
   const [docPhotoFile, setDocPhotoFile] = useState<File | null>(null);
   const [docPhotoPreview, setDocPhotoPreview] = useState<string>('');
   const [docIdProofFile, setDocIdProofFile] = useState<File | null>(null);
@@ -119,12 +124,19 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
     }
   }, [isOpen, initialRole, initialMode]);
 
-  // Resend cooldown timer
+  // Resend cooldown timer (patient)
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const timer = setInterval(() => setResendCooldown((prev) => prev - 1), 1000);
     return () => clearInterval(timer);
   }, [resendCooldown]);
+
+  // Doctor OTP resend cooldown timer
+  useEffect(() => {
+    if (docResendCooldown <= 0) return;
+    const timer = setInterval(() => setDocResendCooldown((prev) => prev - 1), 1000);
+    return () => clearInterval(timer);
+  }, [docResendCooldown]);
 
   // Close on Escape key
   useEffect(() => {
@@ -393,62 +405,151 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
     onClose();
   };
 
-  const handleDoctorRegistrationSubmit = async (e: React.FormEvent) => {
+  // ── STEP 1: Doctor enters email + password → Clerk account created → OTP sent ──
+  const handleDoctorCredsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!docEmail.trim() || !docEmail.includes('@')) {
+      setErrorMessage('Please enter a valid email address.');
+      return;
+    }
+    if (docPassword.length < 8) {
+      setErrorMessage('Password must be at least 8 characters.');
+      return;
+    }
+    if (!isSignUpLoaded || !signUp) {
+      setErrorMessage('Authentication service is initializing. Please try again.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await signUp.create({
+        emailAddress: docEmail.trim(),
+        password: docPassword,
+      });
+
+      if (result.status === 'complete') {
+        await setSignUpActive({ session: result.createdSessionId });
+        const uid = (result as any).createdUserId || clerk.user?.id || '';
+        setDocCreatedUserId(uid);
+        setDocStep('profile');
+      } else {
+        // Clerk requires email verification — send OTP
+        await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+        setDocStep('verify');
+        setDocResendCooldown(60);
+        setSuccessMessage(`A 6-digit OTP has been sent to ${docEmail.trim()}. Check your inbox.`);
+      }
+    } catch (err: any) {
+      const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || 'Account creation failed.';
+      const isDuplicate =
+        msg.toLowerCase().includes('taken') ||
+        msg.toLowerCase().includes('already') ||
+        err?.errors?.[0]?.code === 'form_identifier_exists';
+      if (isDuplicate) {
+        setErrorMessage('This email is already registered. Please sign in to your Doctor Portal instead.');
+      } else {
+        setErrorMessage(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── STEP 2: Doctor enters OTP → email verified → advance to profile form ────
+  const handleDoctorVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDocVerifyError('');
+    if (!docVerifyCode.trim() || docVerifyCode.trim().length < 6) {
+      setDocVerifyError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+    if (!isSignUpLoaded || !signUp) return;
+
+    setDocVerifyLoading(true);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code: docVerifyCode.trim() });
+      if (result.status === 'complete') {
+        await setSignUpActive({ session: result.createdSessionId });
+        const activeSession = clerk.client?.sessions?.find(s => s.id === result.createdSessionId);
+        const uid =
+          (result as any).createdUserId ||
+          activeSession?.user?.id ||
+          clerk.user?.id ||
+          '';
+        setDocCreatedUserId(uid);
+        setSuccessMessage('Email verified! Now fill in your professional profile.');
+        setDocVerifyCode('');
+        setDocStep('profile');
+      } else {
+        setDocVerifyError(`Verification incomplete: ${result.status}`);
+      }
+    } catch (err: any) {
+      const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || 'Invalid or expired code. Try again.';
+      setDocVerifyError(msg);
+    } finally {
+      setDocVerifyLoading(false);
+    }
+  };
+
+  const handleDoctorResendOtp = async () => {
+    if (docResendCooldown > 0 || !signUp) return;
+    try {
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setDocResendCooldown(60);
+      setDocVerifyError('');
+      setSuccessMessage(`Code resent to ${docEmail.trim()}.`);
+    } catch (_) {
+      setDocVerifyError('Failed to resend code. Please try again.');
+    }
+  };
+
+  // ── STEP 3: Doctor fills profile details → backend saves → done ─────────────
+  const handleDoctorProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
     if (!docName.trim()) { setErrorMessage('Doctor full name is required.'); return; }
     if (!docRegNumber.trim()) { setErrorMessage('Medical Registration Number (NMC/SMC) is required.'); return; }
-    if (!docEmail.trim() || !docEmail.includes('@')) { setErrorMessage('Valid email address is required.'); return; }
-    if (docPassword.length < 8) { setErrorMessage('Password must be at least 8 characters.'); return; }
+    if (!docQualifications.trim()) { setErrorMessage('Qualifications are required (e.g. MBBS, MD).'); return; }
 
     setLoading(true);
     try {
-      // 1. Create Clerk Account for Doctor
-      const parts = docName.trim().split(' ');
-      const firstName = parts[0] || 'Dr.';
-      const lastName = parts.slice(1).join(' ') || '';
-
-      let createdUserId = '';
-      try {
-        const signupRes = await signUp?.create({
-          emailAddress: docEmail.trim(),
-          password: docPassword,
-          firstName,
-          lastName,
-        });
-        if (signupRes?.createdUserId) createdUserId = signupRes.createdUserId;
-      } catch (_) {}
-
-      // 2. Upload photo if selected
       let photoUrl = '';
       if (docPhotoFile) {
-        const photoData = new FormData();
-        photoData.append('photo', docPhotoFile);
+        const fd = new FormData();
+        fd.append('photo', docPhotoFile);
         try {
-          const upRes = await fetch(`${API_BASE_URL}/doctors/upload-photo`, {
-            method: 'POST',
-            body: photoData,
-          });
+          const upRes = await fetch(`${API_BASE_URL}/doctors/upload-photo`, { method: 'POST', body: fd });
           const upBody = await upRes.json();
-          if (upBody?.success && upBody?.photoUrl) photoUrl = upBody.photoUrl;
+          if (upBody?.success && upBody?.data?.url) photoUrl = upBody.data.url;
         } catch (_) {}
       }
 
-      // 3. Register doctor profile on backend
+      const resolvedUserId = docCreatedUserId || clerk.user?.id || undefined;
+      let token = '';
+      try { if (getToken) token = (await getToken()) || ''; } catch (_) {}
+
+      const hdrs: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) hdrs['Authorization'] = `Bearer ${token}`;
+      if (resolvedUserId) hdrs['x-user-id'] = resolvedUserId;
+
       const res = await fetch(`${API_BASE_URL}/doctors/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs,
         body: JSON.stringify({
-          userId: createdUserId || undefined,
+          userId: resolvedUserId,
           email: docEmail.trim(),
           fullName: docName.trim(),
           phone: docPhone.trim(),
           name: docName.trim().startsWith('Dr.') ? docName.trim() : `Dr. ${docName.trim()}`,
           registrationNumber: docRegNumber.trim(),
           specialty: docSpecialty,
-          qualifications: docQualifications.trim() || 'MBBS',
-          experienceYears: Number(docExperience) || 5,
+          qualifications: docQualifications.trim(),
+          experienceYears: Number(docExperience) || 0,
           clinicName: docClinicName.trim() || 'MediNest Partner Clinic',
           city: docCity,
           about: docAbout.trim() || 'Experienced medical practitioner.',
@@ -459,18 +560,19 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
 
       const body = await res.json();
       if (!res.ok || !body.success) {
-        setErrorMessage(body?.error || 'Doctor registration failed. Please review your details.');
+        setErrorMessage(body?.error || 'Registration failed. Please review your details.');
         return;
       }
 
       setDocStep('done');
-      setSuccessMessage('Doctor credentials submitted successfully! NMC verification is under review.');
     } catch (err: any) {
       setErrorMessage(`Registration error: ${err?.message || 'Server unreachable'}`);
     } finally {
       setLoading(false);
     }
   };
+
+
 
   // ────────────────────────────────────────────────────────────────────────────
   // ADMIN SUBMISSION HANDLERS
@@ -1019,10 +1121,184 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                   </div>
                 </form>
               ) : (
-                /* Doctor Registration Form */
+                /* Doctor Sign Up — 3-step flow: Credentials → OTP → Profile */
                 <div>
-                  {docStep !== 'done' ? (
-                    <form onSubmit={handleDoctorRegistrationSubmit} className="space-y-4">
+                  {/* ── Step progress indicator ── */}
+                  {docStep !== 'done' && (
+                    <div className="flex items-center gap-2 mb-4">
+                      {(['creds', 'verify', 'profile'] as const).map((step, i) => {
+                        const labels = ['Account', 'Verify OTP', 'Profile'];
+                        const current = ['creds', 'verify', 'profile'].indexOf(docStep);
+                        const isActive = i === current;
+                        const isDone = i < current;
+                        return (
+                          <React.Fragment key={step}>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
+                                isDone ? 'bg-emerald-600 text-white' :
+                                isActive ? 'bg-[#032F31] text-[#FAE58D]' :
+                                'bg-slate-100 text-slate-400'
+                              }`}>
+                                {isDone ? '✓' : i + 1}
+                              </div>
+                              <span className={`text-[10px] font-semibold ${isActive ? 'text-[#032F31]' : isDone ? 'text-emerald-700' : 'text-slate-400'}`}>
+                                {labels[i]}
+                              </span>
+                            </div>
+                            {i < 2 && <div className={`flex-1 h-px ${i < current ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* ── STEP 1: Email + Password ── */}
+                  {docStep === 'creds' && (
+                    <form onSubmit={handleDoctorCredsSubmit} className="space-y-4">
+                      <p className="text-xs text-slate-500 -mt-1">
+                        Enter your email and choose a password. We'll send a verification code to confirm your identity.
+                      </p>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Email Address
+                        </label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                          <input
+                            type="email"
+                            value={docEmail}
+                            onChange={(e) => setDocEmail(e.target.value)}
+                            placeholder="doctor@hospital.in"
+                            required
+                            autoComplete="email"
+                            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Create Password
+                        </label>
+                        <div className="relative">
+                          <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            value={docPassword}
+                            onChange={(e) => setDocPassword(e.target.value)}
+                            placeholder="Min. 8 characters"
+                            required
+                            minLength={8}
+                            autoComplete="new-password"
+                            className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3.5 top-3.5 text-slate-400 hover:text-slate-600"
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-1 block">
+                          Must be at least 8 characters with letters and numbers.
+                        </span>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full py-3 rounded-2xl bg-[#032F31] hover:bg-[#074749] text-white font-bold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {loading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-[#FAE58D]" />
+                            <span>Creating Account...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Mail className="w-4 h-4 text-[#FAE58D]" />
+                            <span>Send Verification Code</span>
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+
+                  {/* ── STEP 2: OTP Verification ── */}
+                  {docStep === 'verify' && (
+                    <form onSubmit={handleDoctorVerifyOtp} className="space-y-4">
+                      <div className="text-center py-2">
+                        <KeyRound className="w-9 h-9 text-teal-700 mx-auto mb-2" />
+                        <h4 className="text-sm font-bold text-[#0C182B]">Check Your Email</h4>
+                        <p className="text-xs text-slate-500 mt-1">
+                          We sent a 6-digit code to <strong>{docEmail}</strong>.
+                          Enter it below to verify your account.
+                        </p>
+                      </div>
+
+                      <div>
+                        <input
+                          type="text"
+                          value={docVerifyCode}
+                          onChange={(e) => {
+                            setDocVerifyCode(e.target.value.replace(/D/g, '').slice(0, 6));
+                            setDocVerifyError('');
+                          }}
+                          placeholder="6-digit code"
+                          maxLength={6}
+                          required
+                          autoComplete="one-time-code"
+                          className="w-full text-center tracking-[0.4em] text-xl font-bold py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-teal-600"
+                        />
+                        {docVerifyError && (
+                          <p className="text-[11px] text-rose-600 mt-1.5 flex items-center gap-1">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                            {docVerifyError}
+                          </p>
+                        )}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={docVerifyLoading || docVerifyCode.length < 6}
+                        className="w-full py-3 rounded-2xl bg-[#032F31] hover:bg-[#074749] text-white font-bold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {docVerifyLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-[#FAE58D]" />
+                            <span>Verifying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-[#FAE58D]" />
+                            <span>Verify & Continue</span>
+                          </>
+                        )}
+                      </button>
+
+                      <div className="text-center">
+                        <button
+                          type="button"
+                          onClick={handleDoctorResendOtp}
+                          disabled={docResendCooldown > 0}
+                          className="text-[11px] text-teal-700 font-semibold hover:underline disabled:text-slate-400 disabled:no-underline cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          {docResendCooldown > 0
+                            ? `Resend in ${docResendCooldown}s`
+                            : "Didn't receive it? Resend code"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* ── STEP 3: Professional Profile Form ── */}
+                  {docStep === 'profile' && (
+                    <form onSubmit={handleDoctorProfileSubmit} className="space-y-4">
+                      <p className="text-xs text-slate-500 -mt-1">
+                        Your email is verified. Fill in your professional details — our clinical board will review your NMC registration.
+                      </p>
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -1037,7 +1313,6 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                             className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
                           />
                         </div>
-
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
                             NMC / SMC Reg Number
@@ -1056,39 +1331,37 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
-                            Email Address
+                            Qualifications
                           </label>
                           <input
-                            type="email"
-                            value={docEmail}
-                            onChange={(e) => setDocEmail(e.target.value)}
-                            placeholder="doctor@hospital.in"
+                            type="text"
+                            value={docQualifications}
+                            onChange={(e) => setDocQualifications(e.target.value)}
+                            placeholder="MBBS, MD (Medicine)"
                             required
                             className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
                           />
                         </div>
-
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
-                            Password
+                            Mobile Number
                           </label>
-                          <input
-                            type="password"
-                            value={docPassword}
-                            onChange={(e) => setDocPassword(e.target.value)}
-                            placeholder="Min. 8 characters"
-                            required
-                            minLength={8}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
-                          />
+                          <div className="relative">
+                            <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                            <input
+                              type="tel"
+                              value={docPhone}
+                              onChange={(e) => setDocPhone(e.target.value)}
+                              placeholder="+91 9876543210"
+                              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:border-teal-600"
+                            />
+                          </div>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-xs font-bold text-slate-700 mb-1">
-                            Specialty
-                          </label>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Specialty</label>
                           <select
                             value={docSpecialty}
                             onChange={(e) => setDocSpecialty(e.target.value)}
@@ -1099,11 +1372,8 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                             ))}
                           </select>
                         </div>
-
                         <div>
-                          <label className="block text-xs font-bold text-slate-700 mb-1">
-                            Practice City
-                          </label>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">City</label>
                           <select
                             value={docCity}
                             onChange={(e) => setDocCity(e.target.value)}
@@ -1114,17 +1384,14 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                             ))}
                           </select>
                         </div>
-
                         <div>
-                          <label className="block text-xs font-bold text-slate-700 mb-1">
-                            Fee in INR (₹)
-                          </label>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Fee (₹)</label>
                           <input
                             type="number"
                             value={docFee}
                             onChange={(e) => setDocFee(e.target.value)}
                             placeholder="499"
-                            required
+                            min="0"
                             className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm font-semibold focus:outline-none focus:border-teal-600"
                           />
                         </div>
@@ -1138,31 +1405,44 @@ export const UnifiedAuthModal: React.FC<UnifiedAuthModalProps> = ({
                         {loading ? (
                           <>
                             <RefreshCw className="w-4 h-4 animate-spin text-[#FAE58D]" />
-                            <span>Submitting Verification Credentials...</span>
+                            <span>Submitting for Review...</span>
                           </>
                         ) : (
                           <>
                             <Stethoscope className="w-4 h-4 text-[#FAE58D]" />
-                            <span>Register as Verified Doctor</span>
+                            <span>Submit for NMC Verification</span>
                           </>
                         )}
                       </button>
                     </form>
-                  ) : (
+                  )}
+
+                  {/* ── STEP 4: Done ── */}
+                  {docStep === 'done' && (
                     <div className="text-center py-6">
-                      <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
-                      <h4 className="text-base font-bold text-[#0C182B]">Credentials Received</h4>
-                      <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                        Your registration has been submitted. The clinical review board will verify your credentials.
+                      <CheckCircle2 className="w-14 h-14 text-emerald-600 mx-auto mb-3" />
+                      <h4 className="text-base font-bold text-[#0C182B]">Registration Submitted!</h4>
+                      <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">
+                        Your profile and NMC registration details have been received. Our clinical review board will verify your credentials. You'll be notified once approved.
                       </p>
+                      <div className="mt-5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-medium">
+                        Approval is typically completed within 1–2 business days.
+                      </div>
                       <button
                         type="button"
                         onClick={() => {
                           setActiveMode('signin');
                           setDocStep('creds');
+                          setDocEmail('');
+                          setDocPassword('');
+                          setDocVerifyCode('');
+                          setDocCreatedUserId('');
+                          setErrorMessage(null);
+                          setSuccessMessage(null);
                         }}
-                        className="mt-4 px-5 py-2 rounded-xl bg-[#032F31] text-white text-xs font-bold"
+                        className="mt-5 px-6 py-2.5 rounded-xl bg-[#032F31] text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#074749]"
                       >
+                        <LogIn className="w-3.5 h-3.5" />
                         Proceed to Doctor Sign In
                       </button>
                     </div>
