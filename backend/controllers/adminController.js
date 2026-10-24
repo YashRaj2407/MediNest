@@ -348,6 +348,9 @@ export async function updateDoctorApproval(req, res) {
 
 // ── DELETE /api/v1/admin/doctors/:id ─────────────────────────────────────
 export async function deleteDoctor(req, res) {
+  if (req.query?.permanent === 'true' || req.body?.permanent === true) {
+    return deleteDoctorPermanently(req, res);
+  }
   const conn = await pool.getConnection();
   try {
     const { id } = req.params;
@@ -424,6 +427,99 @@ export async function deleteDoctor(req, res) {
     conn.release();
   }
 }
+
+
+// ── DELETE /api/v1/admin/doctors/:id/permanent ───────────────────────────
+// Completely purge doctor from MySQL database and Clerk credentials
+export async function deleteDoctorPermanently(req, res) {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const adminId = req.user?.id || 'admin';
+
+    const [[doc]] = await conn.query(
+      `SELECT dp.*, p.email, p.id AS profile_id FROM doctor_profiles dp
+       LEFT JOIN profiles p ON dp.user_id = p.id WHERE dp.id = ?`,
+      [id]
+    );
+    if (!doc) return res.status(404).json({ success: false, error: 'Doctor not found' });
+
+    await conn.beginTransaction();
+
+    // 1. Delete slot holds
+    await conn.query('DELETE FROM slot_holds WHERE doctor_id = ?', [id]);
+
+    // 2. Delete availability rules and schedule blocks
+    await conn.query('DELETE FROM doctor_availability_rules WHERE doctor_id = ?', [id]);
+    await conn.query('DELETE FROM doctor_schedule_blocks WHERE doctor_id = ?', [id]);
+
+    // 3. Delete reviews
+    await conn.query('DELETE FROM doctor_reviews WHERE doctor_id = ?', [id]);
+
+    // 4. Delete saved doctor bookmarks
+    await conn.query('DELETE FROM saved_doctors WHERE doctor_id = ?', [id]);
+
+    // 5. Delete doctor reports
+    await conn.query('DELETE FROM doctor_reports WHERE doctor_id = ?', [id]);
+
+    // 6. Delete appointments & associated receipts/payments
+    const [appts] = await conn.query('SELECT id FROM appointments WHERE doctor_id = ?', [id]);
+    if (appts.length > 0) {
+      const apptIds = appts.map(a => a.id);
+      await conn.query('DELETE FROM receipts WHERE appointment_id IN (?)', [apptIds]);
+      await conn.query('DELETE FROM payments WHERE appointment_id IN (?)', [apptIds]);
+      await conn.query('DELETE FROM appointments WHERE doctor_id = ?', [id]);
+    }
+
+    // 7. Delete doctor profile
+    await conn.query('DELETE FROM doctor_profiles WHERE id = ?', [id]);
+
+    // 8. Delete user profile and notifications if exists
+    if (doc.user_id) {
+      await conn.query('DELETE FROM notifications WHERE user_id = ?', [doc.user_id]);
+      await conn.query('DELETE FROM profiles WHERE id = ?', [doc.user_id]);
+    }
+
+    // 9. Attempt Clerk deletion
+    const { deletedFromClerk, clerkError } = await deleteClerkUserSafely(doc.user_id, doc.email);
+
+    // 10. Audit log entry
+    await writeAudit(conn, {
+      adminId,
+      action: 'doctor_permanently_deleted',
+      targetType: 'doctor',
+      targetId: id,
+      prevStatus: doc.verification_status,
+      newStatus: 'permanently_deleted',
+      reason: reason || 'Permanently deleted by administrator from database and project',
+      metadata: {
+        doctorName: doc.name,
+        originalEmail: doc.email,
+        deletedFromClerk,
+        clerkError,
+        appointmentsPurged: appts.length
+      }
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: `Doctor ${doc.name} was permanently deleted from the database and project.`,
+      deletedFromClerk,
+      clerkError,
+      appointmentsPurged: appts.length
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('[Admin deleteDoctorPermanently]', err);
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    conn.release();
+  }
+}
+
 
 // ── POST /api/v1/admin/reconcile-clerk-user ───────────────────────────────
 export async function reconcileClerkUser(req, res) {

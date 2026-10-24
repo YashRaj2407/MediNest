@@ -171,6 +171,10 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   const [doctorDeleteReason, setDoctorDeleteReason] = useState('');
   const [deletingDoctor, setDeletingDoctor] = useState(false);
 
+  const [doctorToPurge, setDoctorToPurge] = useState<DoctorRecord | null>(null);
+  const [purgingDoctor, setPurgingDoctor] = useState(false);
+  const [purgeConfirmationText, setPurgeConfirmationText] = useState('');
+
   const [reportToUpdate, setReportToUpdate] = useState<{ report: ReportRecord; targetStatus: 'under_review' | 'resolved' | 'dismissed' } | null>(null);
   const [reportActionReason, setReportActionReason] = useState('');
   const [reportAdminNotes, setReportAdminNotes] = useState('');
@@ -350,6 +354,32 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
       showError(err.message || 'Error deactivating doctor');
     } finally {
       setDeletingDoctor(false);
+    }
+  };
+
+  const handleConfirmPermanentDeleteDoctor = async () => {
+    if (!doctorToPurge) return;
+    setPurgingDoctor(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/doctors/${doctorToPurge.id}/permanent`, {
+        method: 'DELETE',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ reason: 'Permanently deleted by admin from database and project' })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showError(data.error || 'Failed to permanently delete doctor');
+        return;
+      }
+      showToast(data.message || `Doctor ${doctorToPurge.name} permanently deleted from database.`);
+      setDoctors(prev => prev.filter(d => d.id !== doctorToPurge.id));
+      setDoctorToPurge(null);
+      setPurgeConfirmationText('');
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Error deleting doctor permanently');
+    } finally {
+      setPurgingDoctor(false);
     }
   };
 
@@ -1098,6 +1128,16 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                           >
                             <Trash2 className="w-3.5 h-3.5 inline mr-1" /> Deactivate
                           </button>
+                          <button
+                            onClick={() => {
+                              setDoctorToPurge(doc);
+                              setPurgeConfirmationText('');
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer flex items-center gap-1 shadow-xs transition-colors"
+                            title="Completely delete doctor and all data permanently from database and project"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 inline" /> Delete Permanently
+                          </button>
                         </div>
 
                         <span className="text-[11px] font-medium text-slate-500">
@@ -1107,6 +1147,45 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                     </div>
                   );
                 })}
+            </div>
+
+            {/* End of Doctors Admin: Permanent Doctor Deletion from Database & Project */}
+            <div className="p-6 rounded-3xl bg-rose-50 border border-rose-200/90 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Permanent Doctor Deletion (Hard Delete / Database Purge)</span>
+                  </div>
+                  <p className="text-xs text-rose-800">
+                    Completely remove any doctor, their login profile, schedule blocks, reviews, and bookmarks permanently from the MySQL database and project. This action cannot be reversed.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+                <select
+                  id="permanent-doctor-select"
+                  aria-label="Select doctor to permanently delete"
+                  className="flex-1 p-2.5 rounded-xl border border-rose-300 bg-white text-xs font-semibold text-slate-800 focus:outline-none focus:border-rose-600 cursor-pointer"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const sel = doctors.find(d => d.id === e.target.value);
+                    if (sel) {
+                      setDoctorToPurge(sel);
+                      setPurgeConfirmationText('');
+                      e.target.value = '';
+                    }
+                  }}
+                >
+                  <option value="" disabled>-- Select Doctor to Delete Completely from Database &amp; Project --</option>
+                  {doctors.map(d => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.specialty}) — {d.email || d.registration_number} [{d.verification_status.toUpperCase()}]
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
           </div>
@@ -1604,6 +1683,76 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
               >
                 {deletingDoctor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 Confirm Deactivation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL 5: CONFIRM PERMANENT DOCTOR DELETION ─────────────────────── */}
+      {doctorToPurge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 border-2 border-rose-500 shadow-2xl animate-fadeIn">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Delete Doctor Completely</h3>
+                <p className="text-xs text-rose-600 font-semibold">Permanent Database &amp; Project Purge</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-rose-50 text-xs text-rose-950 space-y-2 border border-rose-200">
+              <p>
+                You are about to <strong className="text-rose-700 underline">permanently delete</strong>:
+              </p>
+              <div className="p-2.5 rounded-xl bg-white border border-rose-200 font-mono text-[11px] text-slate-800 space-y-0.5">
+                <div><strong>Name:</strong> {doctorToPurge.name}</div>
+                <div><strong>Doctor ID:</strong> {doctorToPurge.id}</div>
+                <div><strong>Email:</strong> {doctorToPurge.email}</div>
+                <div><strong>Registration:</strong> {doctorToPurge.registration_number}</div>
+              </div>
+              <ul className="list-disc pl-4 space-y-1 text-[11px] text-rose-900 pt-1 font-medium">
+                <li>Completely purged from <code className="bg-rose-100 px-1 rounded">doctor_profiles</code> and <code className="bg-rose-100 px-1 rounded">profiles</code>.</li>
+                <li>All schedule rules, blocks, holds, and saved bookmarks will be deleted.</li>
+                <li>Any associated doctor reviews and grievance reports will be removed.</li>
+                <li>Clerk authentication credentials will be revoked.</li>
+                <li className="font-bold text-rose-700">This action CANNOT be undone!</li>
+              </ul>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Type <span className="font-mono text-rose-600 select-all font-extrabold">DELETE</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={purgeConfirmationText}
+                onChange={(e) => setPurgeConfirmationText(e.target.value)}
+                placeholder="DELETE"
+                className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono uppercase tracking-wider focus:outline-none focus:border-rose-600 bg-slate-50"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                disabled={purgingDoctor}
+                onClick={() => {
+                  setDoctorToPurge(null);
+                  setPurgeConfirmationText('');
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={purgingDoctor || purgeConfirmationText.trim().toUpperCase() !== 'DELETE'}
+                onClick={handleConfirmPermanentDeleteDoctor}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-all"
+              >
+                {purgingDoctor ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Delete Completely
               </button>
             </div>
           </div>

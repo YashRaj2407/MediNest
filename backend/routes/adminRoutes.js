@@ -9,6 +9,7 @@ import {
   deletePatient,
   updateDoctorApproval,
   deleteDoctor,
+  deleteDoctorPermanently,
   getReports,
   updateReport,
   getAuditLog,
@@ -29,6 +30,7 @@ router.patch('/patients/:id/status', updatePatientStatus);
 router.delete('/patients/:id', deletePatient);
 router.patch('/doctors/:id/approval', updateDoctorApproval);
 router.delete('/doctors/:id', deleteDoctor);
+router.delete('/doctors/:id/permanent', deleteDoctorPermanently);
 router.post('/reconcile-clerk-user', reconcileClerkUser);
 router.get('/reports', getReports);
 router.patch('/reports/:id', updateReport);
