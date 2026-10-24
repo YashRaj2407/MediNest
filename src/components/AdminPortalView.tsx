@@ -1083,14 +1083,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                         <p><strong>Clinic:</strong> {doc.clinic_name} ({doc.city})</p>
                         <p><strong>Contact:</strong> {doc.email} • {doc.phone || 'N/A'}</p>
                         <p><strong>Total Appointments:</strong> {doc.appointment_count || 0}</p>
-                        {doc.suspension_reason && (
+                        {isSuspended && doc.suspension_reason && (
                           <p className="text-rose-700 bg-rose-50 p-2 rounded-xl mt-1">
                             <strong>Suspension Reason:</strong> {doc.suspension_reason}
                           </p>
                         )}
-                        {doc.approval_reason && (
+                        {isRejected && doc.approval_reason && (
                           <p className="text-slate-700 bg-slate-100 p-2 rounded-xl mt-1">
-                            <strong>Note:</strong> {doc.approval_reason}
+                            <strong>Rejection Reason:</strong> {doc.approval_reason}
                           </p>
                         )}
                       </div>

@@ -502,6 +502,11 @@ export async function initDatabase() {
     );
     console.log('[DB Auto-Init] Platform Administrator account verified (admin@medinest.in).');
 
+    // 4. Ensure verified/approved doctors do not retain stale suspension reasons
+    await connection.query(
+      "UPDATE doctor_profiles SET suspension_reason = NULL WHERE verification_status IN ('approved', 'verified')"
+    );
+
   } catch (err) {
     console.warn('[DB Auto-Init Warning] Could not auto-initialize DB:', err.message);
   } finally {
