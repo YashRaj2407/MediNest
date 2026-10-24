@@ -494,6 +494,14 @@ export async function initDatabase() {
       console.log(`[DB Auto-Init] Schema verified. Found ${docRows[0].cnt} doctors in database.`);
     }
 
+    // 3. Ensure authoritative Administrator account exists in database
+    await connection.query(
+      `INSERT INTO profiles (id, role, full_name, email, account_status)
+       VALUES ('admin_medinest', 'admin', 'MediNest Platform Administrator', 'admin@medinest.in', 'active')
+       ON DUPLICATE KEY UPDATE role = 'admin', account_status = 'active'`
+    );
+    console.log('[DB Auto-Init] Platform Administrator account verified (admin@medinest.in).');
+
   } catch (err) {
     console.warn('[DB Auto-Init Warning] Could not auto-initialize DB:', err.message);
   } finally {

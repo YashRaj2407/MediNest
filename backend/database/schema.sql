@@ -32,6 +32,11 @@ CREATE TABLE profiles (
   INDEX idx_profiles_role (role)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Authoritative Platform Administrator
+INSERT INTO profiles (id, role, full_name, email, account_status)
+VALUES ('admin_medinest', 'admin', 'MediNest Platform Administrator', 'admin@medinest.in', 'active')
+ON DUPLICATE KEY UPDATE role = 'admin', account_status = 'active';
+
 -- -----------------------------------------------------------------------------
 -- 2. DOCTOR PROFILES
 -- -----------------------------------------------------------------------------

@@ -84,7 +84,7 @@ async function runTests() {
     const docsData = await resDocs.json();
     assert(resDocs.ok && docsData.success && Array.isArray(docsData.data), 'Admin getDoctors returns array');
 
-    const testDoc = docsData.data[0];
+    const testDoc = docsData.data.find(d => d.id !== 'doc-9bdb0739') || docsData.data[0];
     if (testDoc) {
       console.log(`   Testing approval on doctor: ${testDoc.name} (${testDoc.id})`);
 
@@ -692,7 +692,7 @@ async function runTests() {
 
     // 3. Different doctor attempting to complete another doctor's appointment -> 403
     // Dr. Yash Dhawale (doc-fd6f7ab6) attempting to complete Dr. Shreyash's appointment (doc-9bdb0739)
-    const otherDocUserId = 'user_3KS5EhBG8pHWuGhRe00IyPOFcaa';
+    const otherDocUserId = 'user_doc_1';
     const resOtherDoc = await fetch(`${BASE_URL}/appointments/${testAId}/complete`, {
       method: 'PATCH',
       headers: { 'x-user-id': otherDocUserId, 'x-user-role': 'doctor' }
@@ -719,9 +719,10 @@ async function runTests() {
     );
 
     // 1. Reschedule (set to 11:00 AM within doctor 09:00 - 18:00 working hours)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const targetDate = new Date();
+    const daysUntilMonday = ((1 + 7 - targetDate.getDay()) % 7) || 7;
+    targetDate.setDate(targetDate.getDate() + daysUntilMonday);
+    const dateStr = targetDate.toISOString().split('T')[0];
     const resResched = await fetch(`${BASE_URL}/appointments/${testGId}/reschedule`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-user-id': patientAId },
