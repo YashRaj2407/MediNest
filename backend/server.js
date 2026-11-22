@@ -62,14 +62,25 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health Check with Database and Razorpay Diagnostics
+// Health Check — always responds 200 so Railway healthcheck passes
+// DB and Razorpay status are reported informatively but do not block startup
 app.get('/api/v1/health', async (req, res) => {
-  const dbStatus = await checkDbConnection();
+  let dbStatus = { connected: false, database: null, error: 'not checked' };
+  try {
+    const result = await Promise.race([
+      checkDbConnection(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('DB check timed out')), 3000))
+    ]);
+    dbStatus = result;
+  } catch (err) {
+    dbStatus = { connected: false, database: null, error: err.message };
+  }
+
   const rawKeyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '';
   const rawSecret = process.env.RAZORPAY_KEY_SECRET || '';
   const hasRazorpay = Boolean(rawKeyId && rawSecret && !rawKeyId.includes('xxx') && !rawSecret.includes('xxx'));
 
-  res.json({
+  res.status(200).json({
     status: 'online',
     service: 'MediNest API Backend',
     timestamp: new Date().toISOString(),

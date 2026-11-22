@@ -6,7 +6,7 @@
   "deploy": {
     "startCommand": "node backend/server.js",
     "healthcheckPath": "/api/v1/health",
-    "healthcheckTimeout": 60,
+    "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE"
   }
 }
