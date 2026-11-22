@@ -1,0 +1,26 @@
+# Terraform state & secrets
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# SSH keys
+*.pem
+*.key
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

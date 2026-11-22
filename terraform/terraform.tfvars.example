@@ -1,0 +1,34 @@
+# MediNest Terraform Variables — EXAMPLE (copy to terraform.tfvars)
+# ⚠️  NEVER commit terraform.tfvars to Git!
+
+aws_region = "ap-south-1"
+environment = "production"
+
+# EC2
+frontend_instance_type = "t2.micro"
+backend_instance_type  = "t2.micro"
+ami_id                 = "ami-0ba051b596cabfebe"
+
+# RDS MySQL
+db_instance_class    = "db.t3.micro"
+db_name              = "medinest_db"
+db_username          = "<YOUR_DATABASE_USERNAME_HERE>"
+db_password          = "<YOUR_DATABASE_PASSWORD_HERE>"
+db_allocated_storage = 20
+
+# Clerk
+clerk_publishable_key = "<YOUR_AUTHENTICATION_PUBLISHABLE_KEY_HERE>"
+clerk_secret_key      = "<YOUR_AUTHENTICATION_SECRET_KEY_HERE>"
+
+# Razorpay
+razorpay_key_id     = "<YOUR_PAYMENT_PUBLIC_KEY_HERE>"
+razorpay_key_secret = "<YOUR_PAYMENT_SECRET_KEY_HERE>"
+
+# Gemini AI
+gemini_api_key = "<YOUR_AI_PROVIDER_API_KEY_HERE>"
+
+# Admin
+admin_secret_token = "medinest_admin_secret_token_2026"
+
+# SSH — restrict to your IP (use https://checkip.amazonaws.com)
+my_ip_cidr = "0.0.0.0/0"

@@ -1,6 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import doctorsRoutes from './routes/doctorsRoutes.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import slotsRoutes from './routes/slotsRoutes.js';
@@ -110,6 +116,19 @@ const handleGracefulShutdown = async (signal) => {
 
 process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+
+// Serve React frontend (dist/) for production — must come AFTER all API routes
+const distPath = join(__dirname, '..', 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // SPA fallback: serve index.html for all non-API routes
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api/')) {
+      res.sendFile(join(distPath, 'index.html'));
+    }
+  });
+  console.log(`[MediNest Backend] Serving frontend from: ${distPath}`);
+}
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {

@@ -17,7 +17,7 @@ export default defineConfig(() => {
     server: {
       host: '0.0.0.0',
       port,
-      allowedHosts: ['medinest-production-a372.up.railway.app'],
+      allowedHosts: ['medinest-production-a372.up.railway.app', 'medinest-backend-production-a93db2fc.up.railway.app', '.up.railway.app'],
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify - file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
@@ -27,7 +27,7 @@ export default defineConfig(() => {
     preview: {
       host: '0.0.0.0',
       port,
-      allowedHosts: ['medinest-production-a372.up.railway.app'],
+      allowedHosts: ['medinest-production-a372.up.railway.app', 'medinest-backend-production-a93db2fc.up.railway.app', '.up.railway.app'],
     },
   };
 });
