@@ -223,7 +223,7 @@ export const DoctorScheduleTab: React.FC<DoctorScheduleTabProps> = ({
       if (bookedAppt.status === 'completed') {
         return { status: 'completed' as const, label: `Completed: ${bookedAppt.patientName}`, appt: bookedAppt };
       }
-      if (bookedAppt.status === 'RESCHEDULE_REQUIRED') {
+      if ((bookedAppt.status as string) === 'RESCHEDULE_REQUIRED') {
         return { status: 'blocked' as const, label: `Reschedule Req: ${bookedAppt.patientName}`, appt: bookedAppt };
       }
       return { status: 'booked' as const, label: `Booked: ${bookedAppt.patientName}`, appt: bookedAppt };

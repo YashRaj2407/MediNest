@@ -87,7 +87,21 @@ export default function App() {
       const name = clerkFullName || email.split('@')[0] || 'User';
       const phone = clerkUser.primaryPhoneNumber?.phoneNumber || '';
 
-      // Check authoritative role from MySQL database first
+      // Immediately synchronize Clerk user into local state so patient is never stuck in guest state
+      if (!loggedInDoctor && !loggedInAdmin && !(isUnifiedAuthOpen && unifiedAuthRole === 'doctor')) {
+        setUser(prev => {
+          if (prev.isLoggedIn && prev.id === clerkUser.id) return prev;
+          return {
+            id: clerkUser.id,
+            name: prev.name && prev.name !== 'Guest Patient' ? prev.name : name,
+            email: email || prev.email,
+            phone: phone || prev.phone,
+            isLoggedIn: true,
+          };
+        });
+      }
+
+      // Check authoritative role from backend profile
       fetch(`${API_BASE_URL}/auth/profile/${clerkUser.id}`)
         .then(res => res.json())
         .then(async (body) => {

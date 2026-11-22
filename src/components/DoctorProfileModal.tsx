@@ -706,7 +706,7 @@ export const DoctorProfileModal: React.FC<DoctorProfileModalProps> = ({
                   </label>
                   <button
                     type="button"
-                    onClick={fetchFreshSlots}
+                    onClick={() => fetchFreshSlots()}
                     disabled={isRefreshing}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-900 transition-colors cursor-pointer"
                   >

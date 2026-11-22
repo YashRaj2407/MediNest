@@ -7,6 +7,7 @@ export default defineConfig(() => {
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   return {
+    root: __dirname,
     plugins: [react(), tailwindcss()],
     resolve: {
       preserveSymlinks: true,

@@ -309,11 +309,11 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
 
                         <div className="flex sm:flex-col items-end justify-between sm:text-right">
                           <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] uppercase tracking-wider border ${
-                            appt.status === 'RESCHEDULE_REQUIRED'
+                            (appt.status as string) === 'RESCHEDULE_REQUIRED'
                               ? 'bg-amber-100 text-amber-950 border-amber-300'
                               : 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
                           }`}>
-                            {appt.status === 'RESCHEDULE_REQUIRED' ? 'Reschedule Required' : 'Upcoming'}
+                            {(appt.status as string) === 'RESCHEDULE_REQUIRED' ? 'Reschedule Required' : 'Upcoming'}
                           </span>
                           <span className="text-sm font-extrabold text-[#0C182B] mt-1">₹{appt.totalINR} Paid</span>
                         </div>
@@ -344,7 +344,7 @@ export const UserDashboardModal: React.FC<UserDashboardModalProps> = ({
                       </div>
 
                       {/* Reschedule Required Alert Banner */}
-                      {appt.status === 'RESCHEDULE_REQUIRED' && (
+                      {(appt.status as string) === 'RESCHEDULE_REQUIRED' && (
                         <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between text-xs text-amber-950">
                           <div className="flex items-center gap-2">
                             <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
