@@ -55,26 +55,22 @@ async function writeAudit(conn, { adminId, action, targetType, targetId, prevSta
 // ── GET /api/v1/admin/patients ─────────────────────────────────────────────
 export async function getPatients(req, res) {
   try {
-    const qPromise = pool.query(
+    const [rows] = await pool.query(
       `SELECT id, role, account_status, full_name, email, phone, created_at
        FROM profiles
        WHERE role = 'patient'
        ORDER BY created_at DESC`
     );
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [rows] = await Promise.race([qPromise, tPromise]);
-    return res.json({ success: true, data: rows || [] });
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.warn('[Admin getPatients fallback]:', err.message);
-    return res.json({ success: true, data: [] });
+    console.warn('[Admin getPatients fallback]:', err.message); return res.json({ success: true, data: [] });
   }
-}
 }
 
 // ── GET /api/v1/admin/doctors ─────────────────────────────────────────────
 export async function getAdminDoctors(req, res) {
   try {
-    const qPromise = pool.query(
+    const [rows] = await pool.query(
       `SELECT dp.id, dp.user_id, dp.name, p.email, p.phone, p.account_status,
               dp.registration_number, dp.specialty, dp.qualifications,
               dp.city, dp.clinic_name, dp.fee_inr, dp.verification_status,
@@ -86,20 +82,16 @@ export async function getAdminDoctors(req, res) {
        JOIN profiles p ON dp.user_id = p.id
        ORDER BY dp.created_at DESC`
     );
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [rows] = await Promise.race([qPromise, tPromise]);
-    return res.json({ success: true, data: rows || [] });
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.warn('[Admin getAdminDoctors fallback]:', err.message);
-    return res.json({ success: true, data: [] });
+    console.warn('[Admin getAdminDoctors fallback]:', err.message); return res.json({ success: true, data: [] });
   }
-}
 }
 
 // ── GET /api/v1/admin/appointments ────────────────────────────────────────
 export async function getAdminAppointments(req, res) {
   try {
-    const qPromise = pool.query(
+    const [rows] = await pool.query(
       `SELECT a.id, a.patient_id, a.patient_name, a.doctor_id,
               dp.name AS doctor_name, dp.specialty AS doctor_specialty,
               a.consultation_type, a.start_datetime, a.end_datetime,
@@ -109,51 +101,43 @@ export async function getAdminAppointments(req, res) {
        ORDER BY a.start_datetime DESC
        LIMIT 500`
     );
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [rows] = await Promise.race([qPromise, tPromise]);
-    return res.json({ success: true, data: rows || [] });
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.warn('[Admin getAdminAppointments fallback]:', err.message);
-    return res.json({ success: true, data: [] });
+    console.warn('[Admin getAdminAppointments fallback]:', err.message); return res.json({ success: true, data: [] });
   }
-}
 }
 
 // ── GET /api/v1/admin/stats ───────────────────────────────────────────────
 export async function getAdminStats(req, res) {
   try {
-    const qPromise = Promise.all([
-      pool.query(`SELECT COUNT(*) AS patientCount FROM profiles WHERE role = 'patient'`),
-      pool.query(`SELECT COUNT(*) AS doctorCount FROM doctor_profiles`),
-      pool.query(`SELECT COUNT(*) AS verifiedDoctors FROM doctor_profiles WHERE verification_status IN ('verified','approved')`),
-      pool.query(`SELECT COUNT(*) AS pendingDoctors FROM doctor_profiles WHERE verification_status = 'pending'`),
-      pool.query(`SELECT COUNT(*) AS apptCount FROM appointments`),
-      pool.query(`SELECT COALESCE(SUM(amount_inr),0) AS revenue FROM payments WHERE status = 'paid'`),
-      pool.query(`SELECT COUNT(*) AS openReports FROM doctor_reports WHERE status IN ('open','under_review')`),
-    ]);
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [resPatients, resDoctors, resVerified, resPending, resAppts, resRev, resReports] = await Promise.race([qPromise, tPromise]);
-
+    const [[{ patientCount }]] = await pool.query(
+      `SELECT COUNT(*) AS patientCount FROM profiles WHERE role = 'patient'`
+    );
+    const [[{ doctorCount }]] = await pool.query(
+      `SELECT COUNT(*) AS doctorCount FROM doctor_profiles`
+    );
+    const [[{ verifiedDoctors }]] = await pool.query(
+      `SELECT COUNT(*) AS verifiedDoctors FROM doctor_profiles WHERE verification_status IN ('verified','approved')`
+    );
+    const [[{ pendingDoctors }]] = await pool.query(
+      `SELECT COUNT(*) AS pendingDoctors FROM doctor_profiles WHERE verification_status = 'pending'`
+    );
+    const [[{ apptCount }]] = await pool.query(
+      `SELECT COUNT(*) AS apptCount FROM appointments`
+    );
+    const [[{ revenue }]] = await pool.query(
+      `SELECT COALESCE(SUM(amount_inr),0) AS revenue FROM payments WHERE status = 'paid'`
+    );
+    const [[{ openReports }]] = await pool.query(
+      `SELECT COUNT(*) AS openReports FROM doctor_reports WHERE status IN ('open','under_review')`
+    );
     return res.json({
       success: true,
-      data: {
-        patientCount: resPatients?.[0]?.[0]?.patientCount || 0,
-        doctorCount: resDoctors?.[0]?.[0]?.doctorCount || 0,
-        verifiedDoctors: resVerified?.[0]?.[0]?.verifiedDoctors || 0,
-        pendingDoctors: resPending?.[0]?.[0]?.pendingDoctors || 0,
-        apptCount: resAppts?.[0]?.[0]?.apptCount || 0,
-        revenue: resRev?.[0]?.[0]?.revenue || 0,
-        openReports: resReports?.[0]?.[0]?.openReports || 0
-      }
+      data: { patientCount, doctorCount, verifiedDoctors, pendingDoctors, apptCount, revenue, openReports }
     });
   } catch (err) {
-    console.warn('[Admin getAdminStats fallback]:', err.message);
-    return res.json({
-      success: true,
-      data: { patientCount: 0, doctorCount: 0, verifiedDoctors: 0, pendingDoctors: 0, apptCount: 0, revenue: 0, openReports: 0 }
-    });
+    console.warn('[Admin getAdminStats fallback]:', err.message); return res.json({ success: true, data: { patientCount: 0, doctorCount: 0, verifiedDoctors: 0, pendingDoctors: 0, apptCount: 0, revenue: 0, openReports: 0 } });
   }
-}
 }
 
 // ── PATCH /api/v1/admin/patients/:id/status ───────────────────────────────
@@ -612,23 +596,27 @@ export async function reconcileClerkUser(req, res) {
 // ── GET /api/v1/admin/reports ─────────────────────────────────────────────
 export async function getReports(req, res) {
   try {
-    const qPromise = pool.query(
-      `SELECT r.*,
-              dp.name AS doctor_name, dp.specialty AS doctor_specialty,
-              p.full_name AS patient_name, p.email AS patient_email
-       FROM doctor_reports r
-       LEFT JOIN doctor_profiles dp ON r.doctor_id = dp.id
-       LEFT JOIN profiles p ON r.patient_id = p.id
-       ORDER BY r.created_at DESC`
-    );
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [rows] = await Promise.race([qPromise, tPromise]);
-    return res.json({ success: true, data: rows || [] });
+    const { status, from, to } = req.query;
+    let sql = `
+      SELECT r.*, 
+        p.full_name AS patient_name, p.email AS patient_email,
+        dp.name AS doctor_name, dp.specialty AS doctor_specialty
+      FROM doctor_reports r
+      JOIN profiles p ON r.patient_id = p.id
+      JOIN doctor_profiles dp ON r.doctor_id = dp.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (status && status !== 'all') { sql += ` AND r.status = ?`; params.push(status); }
+    if (from) { sql += ` AND r.created_at >= ?`; params.push(from); }
+    if (to) { sql += ` AND r.created_at <= ?`; params.push(to); }
+    sql += ` ORDER BY r.created_at DESC`;
+
+    const [rows] = await pool.query(sql, params);
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.warn('[Admin getReports fallback]:', err.message);
-    return res.json({ success: true, data: [] });
+    console.warn('[Admin getReports fallback]:', err.message); return res.json({ success: true, data: [] });
   }
-}
 }
 
 // ── PATCH /api/v1/admin/reports/:id ──────────────────────────────────────
@@ -691,15 +679,11 @@ export async function updateReport(req, res) {
 // ── GET /api/v1/admin/audit-log ───────────────────────────────────────────
 export async function getAuditLog(req, res) {
   try {
-    const qPromise = pool.query(
+    const [rows] = await pool.query(
       `SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT 200`
     );
-    const tPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-    const [rows] = await Promise.race([qPromise, tPromise]);
-    return res.json({ success: true, data: rows || [] });
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.warn('[Admin getAuditLog fallback]:', err.message);
-    return res.json({ success: true, data: [] });
+    console.warn('[Admin getAuditLog fallback]:', err.message); return res.json({ success: true, data: [] });
   }
-}
 }
